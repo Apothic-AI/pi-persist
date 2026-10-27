@@ -1,5 +1,5 @@
 {
-	"name": "@bitnom/pi-env-context",
+	"name": "@apothic-ai/pi-env-context",
 	"version": "0.1.0",
 	"type": "module",
 	"description": "pi extension: an <environment_context> prompt section that other extensions can append to.",
@@ -33,7 +33,7 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/bitnom/pi-env-context"
+		"url": "https://github.com/Apothic-AI/pi-env-context"
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit",

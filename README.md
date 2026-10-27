@@ -16,7 +16,7 @@ A pi extension that renders an `<environment_context>` section into the system p
 ## Install
 
 ```
-pi install npm:@bitnom/pi-env-context
+pi install npm:@apothic-ai/pi-env-context
 ```
 
 or from a checkout:
@@ -40,7 +40,7 @@ It is **not** `$SHELL`. Those differ: `$SHELL` names the interactive login shell
 ## Contribute a block
 
 ```ts
-import { registerEnvContribution } from "@bitnom/pi-env-context";
+import { registerEnvContribution } from "@apothic-ai/pi-env-context";
 
 const unregister = registerEnvContribution({
 	id: "pi-mode",
