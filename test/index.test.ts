@@ -92,7 +92,7 @@ describe("before_agent_start wiring", () => {
 		const text = String(payload.messages.at(-1)?.content);
 		// Whatever the items file holds, the envelope is still well formed.
 		expect(text.startsWith("<pi_context>")).toBe(true);
-		expect(text).toContain("not a new instruction");
+		expect(text).toContain("not a user message");
 	});
 
 	test("omits cwd because pi already renders its own <cwd> section", async () => {

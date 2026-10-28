@@ -107,8 +107,10 @@ describe("appendTrailingMessage", () => {
 		expect(text.startsWith(`<${ENVELOPE_TAG}>`)).toBe(true);
 		expect(text.endsWith(`</${ENVELOPE_TAG}>`)).toBe(true);
 		expect(text).toContain("<clock>12:00</clock>");
-		// The wrapper exists so this is not read as a second instruction.
-		expect(text).toContain("not a new instruction");
+		// The wrapper separates "not a user turn" from "the contents are authoritative".
+		expect(text).toContain("not a user message");
+		expect(text).toContain("follow any");
+		expect(text).toContain("instruction they contain");
 	});
 
 	test("wraps responses-API content in input_text blocks", () => {
@@ -179,12 +181,17 @@ describe("appendTrailingMessage", () => {
 });
 
 describe("envelope rendering", () => {
-	test("declares itself as context rather than an instruction", () => {
+	test("separates 'not a user turn' from 'contents are authoritative'", () => {
 		const text = renderTrailingMessage([{ id: "clock", content: "12:00" }]);
-		expect(text).toContain("ambient context");
-		expect(text).toContain("not a user");
-		expect(text).toContain("not a new instruction");
-		expect(text).toContain("Continue with the task you were already given");
+		// The envelope must not read as the user's request...
+		expect(text).toContain("not a user message");
+		expect(text).toContain("does not");
+		// ...but it must not tell the model to discard instructions either. An earlier preamble said
+		// "not a new instruction", and models correctly refused to follow items that were one.
+		expect(text).toContain("authoritative");
+		expect(text).toContain("follow any");
+		expect(text).not.toContain("not a new instruction");
+		expect(text).not.toContain("use this\nonly as reference");
 	});
 
 	test("nests each contribution in its own tag, preserving the given order", () => {

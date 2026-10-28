@@ -155,19 +155,27 @@ export function tagNameFor(id: string): string {
  */
 export const ENVELOPE_TAG = "pi_context";
 
+/**
+ * The framing line.
+ *
+ * An earlier version said "not a new instruction", which was meant to stop the model treating the
+ * envelope as the user's request — but it also told the model to ignore items whose whole purpose is
+ * to carry an instruction. Models correctly reported the contradiction and discarded the content.
+ *
+ * The line now separates two things that were conflated: the envelope is not a *user turn* and does
+ * not change the task, but its contents are authoritative configuration and must be followed.
+ */
+export const ENVELOPE_PREAMBLE =
+	"Context configured for this session by the operator. This is not a user message and does not\n" +
+	"replace the task you were given, but the contents below are authoritative: follow any\n" +
+	"instruction they contain. Environment facts are for reference.";
+
 export function renderTrailingMessage(messages: readonly ResolvedMessage[]): string {
 	if (messages.length === 0) return "";
 	const items = messages.map(
 		(message) => `  <${tagNameFor(message.id)}>${sanitizeEnvValue(message.content)}</${tagNameFor(message.id)}>`,
 	);
-	return [
-		`<${ENVELOPE_TAG}>`,
-		"This block is ambient context supplied automatically before each request. It is not a user",
-		"message and not a new instruction. Continue with the task you were already given; use this",
-		"only as reference.",
-		...items,
-		`</${ENVELOPE_TAG}>`,
-	].join("\n");
+	return [`<${ENVELOPE_TAG}>`, ENVELOPE_PREAMBLE, ...items, `</${ENVELOPE_TAG}>`].join("\n");
 }
 
 /** The message-array key for a provider payload: `messages` for completions, `input` for responses. */
