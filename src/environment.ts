@@ -76,19 +76,21 @@ export interface EnvironmentFacts extends ShellFacts {
 	cwd: string;
 	platform: string;
 	arch: string;
-	date: string;
-	timezone: string;
 }
 
-/** Host facts that are cheap to recompute and stable within a session's day. */
-export function detectEnvironment(cwd: string, now = new Date()): EnvironmentFacts {
+/**
+ * Host facts that hold for the whole session.
+ *
+ * Deliberately no date or time: both change during a session, and a system-prompt section that
+ * changes re-renders the prompt prefix and costs a cache miss. Anything volatile belongs in a
+ * per-turn custom message, which does not disturb the cached prefix.
+ */
+export function detectEnvironment(cwd: string): EnvironmentFacts {
 	return {
 		cwd,
 		...detectShell(),
 		platform: process.platform,
 		arch: process.arch,
-		date: now.toISOString().slice(0, 10),
-		timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
 	};
 }
 
@@ -116,8 +118,6 @@ export function renderEnvironment(facts: EnvironmentFacts, options: RenderEnviro
 	field("shell", facts.shell);
 	field("platform", facts.platform);
 	field("arch", facts.arch);
-	field("current_date", facts.date);
-	field("timezone", facts.timezone);
 
 	for (const block of [...(options.blocks ?? [])].sort((left, right) => left.id.localeCompare(right.id))) {
 		if (!isValidEnvBlockId(block.id)) continue;

@@ -13,8 +13,6 @@ const facts: EnvironmentFacts = {
 	shell: "/bin/bash",
 	platform: "linux",
 	arch: "x64",
-	date: "2026-10-27",
-	timezone: "America/New_York",
 };
 
 describe("escaping", () => {
@@ -53,8 +51,10 @@ describe("renderEnvironment", () => {
 		expect(section.startsWith("<environment_context>\n  <cwd>")).toBe(true);
 		expect(section.endsWith("</environment_context>")).toBe(true);
 		expect(section).toContain("  <shell>/bin/bash</shell>");
-		expect(section).toContain("  <current_date>2026-10-27</current_date>");
-		expect(section).toContain("  <timezone>America/New_York</timezone>");
+		// Volatile values are deliberately absent: they belong in a per-turn message, where a change
+		// does not re-render the cached prompt prefix.
+		expect(section).not.toContain("current_date");
+		expect(section).not.toContain("timezone");
 	});
 
 	test("omits requested fields and skips contributions that render empty", () => {
@@ -105,13 +105,13 @@ describe("renderEnvironment", () => {
 	});
 
 	test("is byte-identical across calls, which is what keeps the prompt cache warm", () => {
-		const build = () => renderEnvironment(detectEnvironment("/tmp/x", new Date("2026-10-27T12:00:00Z")));
+		const build = () => renderEnvironment(detectEnvironment("/tmp/x"));
 		expect(build()).toBe(build());
 	});
 
 	test("returns empty string when every field is omitted and no blocks remain", () => {
 		const section = renderEnvironment(facts, {
-			omit: ["cwd", "shell", "platform", "arch", "current_date", "timezone"],
+			omit: ["cwd", "shell", "platform", "arch"],
 		});
 		expect(section).toBe("");
 	});

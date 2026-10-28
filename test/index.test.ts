@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import envContext, { buildEnvironmentSection, DEFAULT_OMIT, SECTION_NAME } from "../src/index.ts";
+import { clearEnvMessages, registerEnvMessage } from "../src/messages.ts";
 import { clearContributions, REGISTRY_SYMBOL, registerEnvContribution } from "../src/registry.ts";
 
 afterEach(() => {
 	clearContributions();
+	clearEnvMessages();
 });
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
@@ -19,7 +21,14 @@ function harness(activeTools: string[] = ["read", "bash"]) {
 		getActiveTools: () => activeTools,
 	} as unknown as ExtensionAPI);
 
-	const ctx = { cwd: "/home/u/project", provider: "relayfast", mode: "tui", model: { provider: "relayfast" } };
+	const ctx = {
+		cwd: "/home/u/project",
+		provider: "relayfast",
+		mode: "tui",
+		model: { provider: "relayfast" },
+		// Dedup reads the active branch; an empty one means "nothing injected yet".
+		sessionManager: { buildContextEntries: () => [] as unknown[] },
+	};
 	// `systemPrompt` is a readonly field pi sets on the event; the handler must not return an
 	// override, so the harness omits it entirely rather than seeding a value.
 	const event: { type: string; systemPrompt?: string; systemPromptOptions: { sections: Record<string, string> } } = {
@@ -27,18 +36,24 @@ function harness(activeTools: string[] = ["read", "bash"]) {
 		systemPromptOptions: { sections: {} },
 	};
 	return {
+		async providerRequest(payload: unknown) {
+			return handlers.get("before_provider_request")!({ type: "before_provider_request", payload }, ctx);
+		},
 		async start() {
-			await handlers.get("before_agent_start")!(event, ctx);
-			return event;
+			const result = (await handlers.get("before_agent_start")!(event, ctx)) as
+				| { message?: { customType?: string; content?: string } }
+				| undefined;
+			return { event, message: result?.message };
 		},
 		event,
+		ctx,
 	};
 }
 
 describe("before_agent_start wiring", () => {
 	test("writes the section in place so pi can diff it", async () => {
 		const app = harness();
-		const event = await app.start();
+		const { event } = await app.start();
 		const section = event.systemPromptOptions.sections[SECTION_NAME];
 		expect(section).toContain("<environment_context>");
 		expect(section).toContain("<shell>");
@@ -47,28 +62,43 @@ describe("before_agent_start wiring", () => {
 		expect(event.systemPrompt).toBeUndefined();
 	});
 
+	test("volatile contributions never enter the prompt section", async () => {
+		registerEnvMessage({ id: "clock", content: "12:00" });
+		const { event } = await harness().start();
+		// A section change re-renders the cached prefix; volatile text must stay out of it.
+		expect(event.systemPromptOptions.sections[SECTION_NAME]).not.toContain("12:00");
+	});
+
+	test("before_provider_request appends the trailing message to the payload", async () => {
+		registerEnvMessage({ id: "clock", content: "12:00" });
+		const app = harness();
+		const payload = { messages: [{ role: "user", content: "hi" }] as Array<{ role: string; content: unknown }> };
+		await app.providerRequest(payload);
+		expect(payload.messages.at(-1)).toEqual({ role: "developer", content: "12:00" });
+	});
+
 	test("omits cwd because pi already renders its own <cwd> section", async () => {
-		const event = await harness().start();
+		const { event } = await harness().start();
 		expect(DEFAULT_OMIT).toContain("cwd");
 		expect(event.systemPromptOptions.sections[SECTION_NAME]).not.toContain("<cwd>");
 	});
 
 	test("includes registered contributions on the next request", async () => {
 		registerEnvContribution({ id: "mode", content: () => "<mode>plan</mode>" });
-		const event = await harness().start();
+		const { event } = await harness().start();
 		expect(event.systemPromptOptions.sections[SECTION_NAME]).toContain("<mode>&lt;mode&gt;plan&lt;/mode&gt;</mode>");
 	});
 
 	test("a contribution filtered by provider never reaches the section", async () => {
 		registerEnvContribution({ id: "other", providers: ["openrouter"], content: "present" });
-		const event = await harness().start();
+		const { event } = await harness().start();
 		expect(event.systemPromptOptions.sections[SECTION_NAME]).not.toContain("present");
 	});
 
 	test("successive requests produce the same bytes", async () => {
 		const app = harness();
-		const first = (await app.start()).systemPromptOptions.sections[SECTION_NAME];
-		const second = (await app.start()).systemPromptOptions.sections[SECTION_NAME];
+		const first = (await app.start()).event.systemPromptOptions.sections[SECTION_NAME];
+		const second = (await app.start()).event.systemPromptOptions.sections[SECTION_NAME];
 		expect(second).toBe(first);
 	});
 
@@ -80,7 +110,7 @@ describe("before_agent_start wiring", () => {
 			cwd: "/x",
 			activeTools: [],
 			mode: "tui",
-			omit: ["cwd", "shell", "platform", "arch", "current_date", "timezone"],
+			omit: ["cwd", "shell", "platform", "arch"],
 		});
 		expect(empty).toBe("");
 		delete app.event.systemPromptOptions.sections[SECTION_NAME];
@@ -100,7 +130,7 @@ describe("cross-extension registration without importing this package", () => {
 			contributions: Map<string, unknown>;
 		};
 		registry.contributions.set("foreign", { id: "foreign", content: "from outside" });
-		const event = await harness().start();
+		const { event } = await harness().start();
 		expect(event.systemPromptOptions.sections[SECTION_NAME]).toContain("from outside");
 	});
 });
