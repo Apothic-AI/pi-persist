@@ -2,50 +2,37 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-	CLOCK_CONTRIBUTION_ID,
-	DEFAULT_SETTINGS,
-	formatClock,
-	readEnvContextSettings,
-	readSettingsFromDisk,
-	SETTINGS_KEY,
-} from "../src/settings.ts";
+import { DEFAULT_SETTINGS, readPersistSettings, readSettingsFromDisk, SETTINGS_KEY } from "../src/settings.ts";
 
-describe("readEnvContextSettings", () => {
+describe("readPersistSettings", () => {
 	test("defaults when the namespace is absent", () => {
-		expect(readEnvContextSettings(undefined)).toEqual(DEFAULT_SETTINGS);
-		expect(readEnvContextSettings({})).toEqual(DEFAULT_SETTINGS);
-	});
-
-	test("reads a boolean clock flag", () => {
-		expect(readEnvContextSettings({ [SETTINGS_KEY]: { clock: false } })).toEqual({ clock: false });
-		expect(readEnvContextSettings({ [SETTINGS_KEY]: { clock: true } })).toEqual({ clock: true });
+		expect(readPersistSettings(undefined)).toEqual(DEFAULT_SETTINGS);
+		expect(readPersistSettings({})).toEqual(DEFAULT_SETTINGS);
 	});
 
 	test("ignores malformed blocks instead of throwing", () => {
-		expect(readEnvContextSettings({ [SETTINGS_KEY]: null })).toEqual(DEFAULT_SETTINGS);
-		expect(readEnvContextSettings({ [SETTINGS_KEY]: [] })).toEqual(DEFAULT_SETTINGS);
-		expect(readEnvContextSettings({ [SETTINGS_KEY]: "off" })).toEqual(DEFAULT_SETTINGS);
-		expect(readEnvContextSettings({ [SETTINGS_KEY]: { clock: "no" } })).toEqual(DEFAULT_SETTINGS);
+		expect(readPersistSettings({ [SETTINGS_KEY]: null })).toEqual(DEFAULT_SETTINGS);
+		expect(readPersistSettings({ [SETTINGS_KEY]: [] })).toEqual(DEFAULT_SETTINGS);
+		expect(readPersistSettings({ [SETTINGS_KEY]: "off" })).toEqual(DEFAULT_SETTINGS);
+	});
+
+	test("ignores unknown keys", () => {
+		expect(readPersistSettings({ [SETTINGS_KEY]: { future: true } })).toEqual(DEFAULT_SETTINGS);
 	});
 
 	test("leaves unrelated settings untouched", () => {
-		const settings = { theme: "neon-noir", [SETTINGS_KEY]: { clock: false } };
-		readEnvContextSettings(settings);
+		const settings = { theme: "neon-noir", [SETTINGS_KEY]: { anything: 1 } };
+		readPersistSettings(settings);
 		expect(settings.theme).toBe("neon-noir");
 	});
 });
 
 describe("readSettingsFromDisk", () => {
 	// A temp dir, not a path under test/, so nothing can be committed by accident.
-	let dir = "";
-	afterEach(() => {
-		dir = "";
-	});
+	afterEach(() => {});
 
 	function freshDir(): string {
-		dir = mkdtempSync(join(tmpdir(), "pi-persist-settings-"));
-		return dir;
+		return mkdtempSync(join(tmpdir(), "pi-persist-settings-"));
 	}
 
 	test("falls back to defaults when settings.json is missing", () => {
@@ -58,31 +45,9 @@ describe("readSettingsFromDisk", () => {
 		expect(readSettingsFromDisk(target)).toEqual(DEFAULT_SETTINGS);
 	});
 
-	test("reads the namespace from a real settings file", () => {
+	test("reads a real settings file without inventing keys", () => {
 		const target = freshDir();
-		writeFileSync(join(target, "settings.json"), JSON.stringify({ [SETTINGS_KEY]: { clock: false } }));
-		expect(readSettingsFromDisk(target)).toEqual({ clock: false });
-	});
-});
-
-describe("formatClock", () => {
-	test("includes a date, a time, and an explicit zone", () => {
-		const text = formatClock(new Date("2026-10-28T00:52:00Z"));
-		expect(text).toMatch(/\d{2}\/\d{2}\/\d{4}/);
-		expect(text).toMatch(/\d{2}:\d{2}:\d{2}/);
-		// Without a zone the string is ambiguous: the model cannot tell where the host is.
-		expect(text).toMatch(/[A-Z]{2,5}|GMT|UTC/);
-	});
-
-	test("is stable for a fixed instant", () => {
-		const at = new Date("2026-10-28T00:52:00Z");
-		expect(formatClock(at)).toBe(formatClock(at));
-	});
-});
-
-describe("clock contribution id", () => {
-	test("is a stable, tag-safe id", () => {
-		expect(CLOCK_CONTRIBUTION_ID).toBe("clock");
-		expect(/^[A-Za-z][\w.-]*$/.test(CLOCK_CONTRIBUTION_ID)).toBe(true);
+		writeFileSync(join(target, "settings.json"), JSON.stringify({ theme: "x", [SETTINGS_KEY]: {} }));
+		expect(readSettingsFromDisk(target)).toEqual(DEFAULT_SETTINGS);
 	});
 });

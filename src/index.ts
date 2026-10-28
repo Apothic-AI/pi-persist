@@ -1,15 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { detectEnvironment, type EnvBlock, renderEnvironment } from "./environment.ts";
-import { itemsFilePath, readItemsFile } from "./items.ts";
+import { ensureItemsFile, itemsFilePath, readItemsFile } from "./items.ts";
 import { appendTrailingMessage, type MessageContext, registerEnvMessage } from "./messages.ts";
 import { type ContributionContext, collectContributions, registerEnvContribution } from "./registry.ts";
-import {
-	CLOCK_CONTRIBUTION_ID,
-	DEFAULT_SETTINGS,
-	type EnvContextSettings,
-	formatClock,
-	readEnvContextSettings,
-} from "./settings.ts";
 import { expandTemplate } from "./template.ts";
 
 /** Prompt section name. Pi renders it as `<environment_context>…</environment_context>`. */
@@ -56,15 +49,6 @@ export function buildEnvironmentSection(options: BuildSectionOptions): string {
  * A contributor picks the channel by calling the matching register function. Neither channel is
  * persisted by this extension, so nothing accumulates in the transcript.
  */
-/** Settings via the live pi handle, degrading to defaults when it cannot answer. */
-export function settingsForPi(pi: Pick<ExtensionAPI, "getSettings">): EnvContextSettings {
-	try {
-		return readEnvContextSettings(pi.getSettings());
-	} catch {
-		return { ...DEFAULT_SETTINGS };
-	}
-}
-
 /**
  * Register every item from the items file into the live registries.
  *
@@ -104,22 +88,13 @@ export function loadDeclarativeItems(path = itemsFilePath()): { unregister: Arra
 }
 
 export default function envContext(pi: ExtensionAPI) {
-	// Declarative items are loaded once per session; `/reload` re-runs this and picks up edits.
+	// Seed the preset on a first run, then load. `/reload` re-runs this and picks up edits.
+	ensureItemsFile();
 	const declarative = loadDeclarativeItems();
 	if (declarative.errors.length > 0) {
 		console.warn(`pi-persist: ${declarative.errors.length} item(s) skipped in ${itemsFilePath()}`);
 		for (const error of declarative.errors) console.warn(`  ${error}`);
 	}
-
-	// Built-in trailing item. Registered here rather than by a consumer because it answers a
-	// question every session has: what time is it, on this host, right now.
-	registerEnvMessage({
-		id: CLOCK_CONTRIBUTION_ID,
-		priority: -100,
-		// A settings read must never break the channel: if `getSettings` is unavailable or throws,
-		// fall back to the defaults rather than dropping every contribution on this request.
-		content: () => (settingsForPi(pi).clock ? formatClock() : undefined),
-	});
 
 	pi.on("before_agent_start", (event, ctx) => {
 		const section = buildEnvironmentSection({
@@ -164,11 +139,9 @@ export {
 	registerEnvContribution,
 } from "./registry.ts";
 export {
-	CLOCK_CONTRIBUTION_ID,
 	DEFAULT_SETTINGS,
-	type EnvContextSettings,
-	formatClock,
-	readEnvContextSettings,
+	type PersistSettings,
+	readPersistSettings,
 	readSettingsFromDisk,
 	SETTINGS_KEY,
 } from "./settings.ts";

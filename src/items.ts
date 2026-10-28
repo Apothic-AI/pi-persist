@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync } from "node:fs";
+import { accessSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -37,6 +37,22 @@ export interface ItemsFile {
 }
 
 export const EMPTY_ITEMS_FILE: ItemsFile = { version: 1, items: [] };
+
+/**
+ * Shipped preset, written on first run when there is no items file.
+ *
+ * This replaces a built-in clock contribution that used to live in code. One implementation instead
+ * of two: the datetime behaviour is the `{{datetime}}` template, and the preset is just an item that
+ * uses it. Deleting the item removes the clock; nothing else has to know about it.
+ */
+export const PRESET_ITEMS: readonly DeclarativeItem[] = [
+	{
+		id: "current_datetime",
+		channel: "trailing",
+		content: "{{datetime}}",
+		priority: -100,
+	},
+];
 
 export function itemsFilePath(agentDir = getAgentDir()): string {
 	return join(agentDir, ITEMS_FILENAME);
@@ -102,6 +118,27 @@ export function parseItemsFile(raw: string): ValidationResult {
 		if (error) errors.push(error);
 	});
 	return { items, errors };
+}
+
+/**
+ * Ensure the items file exists, seeding the preset when it does not.
+ *
+ * Only on a missing file: an existing file — even an empty one — is the user's decision and is left
+ * alone. Deleting every item must not resurrect the preset on the next start.
+ */
+export function ensureItemsFile(path = itemsFilePath()): void {
+	try {
+		accessSync(path);
+		return;
+	} catch {
+		// fall through to seed
+	}
+	try {
+		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(path, `${JSON.stringify({ version: 1, items: [...PRESET_ITEMS] }, null, 2)}\n`);
+	} catch {
+		// A read-only agent dir is not a reason to fail a session; the extension works without items.
+	}
 }
 
 /** Read the items file. A missing file is an empty list, not an error. */

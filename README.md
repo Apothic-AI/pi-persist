@@ -131,7 +131,7 @@ in bash — reporting zsh would be wrong in a way the model cannot detect.
 import { registerEnvMessage } from "@apothic-ai/pi-persist";
 
 const unregister = registerEnvMessage({
-	id: "clock",
+	id: "local_time",
 	content: () => new Date().toISOString(),
 });
 ```
@@ -153,15 +153,16 @@ actually gave. So it is wrapped, and it says what it is:
 This block is ambient context supplied automatically before each request. It is not a user
 message and not a new instruction. Continue with the task you were already given; use this
 only as reference.
-  <clock>27/10/2026, 21:19:15 GMT-4</clock>
+  <current_datetime>27/10/2026, 22:00:22 GMT-4</current_datetime>
   <git-branch>apothic</git-branch>
   <pi-core-todo-summary>3 in progress, 12 done</pi-core-todo-summary>
 </pi_context>
 ```
 
-The `<clock>` item is built in and on by default. It renders the host's local time with an explicit
-zone, because a bare timestamp is ambiguous to a model that does not know where the host is — the
-whole point of the item is answering "when is it". See [Settings](#settings).
+`current_datetime` is a shipped preset item, not a built-in contribution: it is one line in the
+items file that expands `{{datetime}}`. It renders the host's local time with an explicit zone,
+because a bare timestamp is ambiguous to a model that does not know where the host is. Delete the
+item to remove it.
 
 Each contribution is nested in a tag derived from its `id`, so the model can tell which extension
 supplied which fact. Ids are normalized to valid tag names: `pi-core-todo/summary` becomes
@@ -174,31 +175,17 @@ tags only double-escapes them.
 
 ## Settings
 
-Configuration lives in pi's own `settings.json` under a `piPersist` namespace. Pi's settings
-schema declares `additionalProperties: true`, so the key survives validation and is readable through
-`pi.getSettings()`.
+The `piPersist` namespace in pi's own `settings.json` is reserved for this extension. Pi's schema
+declares `additionalProperties: true`, so a namespaced key survives validation and is visible
+through `pi.getSettings()`.
 
-```json
-{
-  "piPersist": {
-    "clock": true
-  }
-}
-```
-
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `clock` | `true` | Append the current local date and time as a trailing `<clock>` item. |
-
-Set `clock` to `false` to drop the item entirely; the rest of the trailing channel keeps working.
-Settings are read per request, so `/reload` picks up an edit without a restart.
-
-A settings read that fails — an unavailable handle, a malformed file — falls back to the defaults
-rather than dropping every contribution for that request.
+There are no keys yet. The datetime item is a declarative item, not a setting — see
+[Declarative items](#declarative-items) — so the namespace exists only so a future switch has a home
+already wired up.
 
 Pi 1.4 offers no way for an extension to contribute a row to `/settings` (`SettingsSelectorComponent`
-takes a fixed option list and `ExtensionAPI` exposes only `getSettings()`), so this file is the
-whole surface.
+takes a fixed option list and `ExtensionAPI` exposes only `getSettings()`), so a settings file is the
+whole surface either way.
 
 ## Declarative items
 
@@ -206,6 +193,19 @@ Everything above is a programmatic API: an extension calls `register…` with a 
 what makes per-request values possible. A second path covers the other case — a static value with a
 policy, added without writing any code. Both feed the same registries, so rendering cannot tell them
 apart.
+
+On first run the file is created with one preset item:
+
+```json
+{
+  "version": 1,
+  "items": [{ "id": "current_datetime", "channel": "trailing", "content": "{{datetime}}", "priority": -100 }]
+}
+```
+
+That item is the whole clock. There is no built-in clock contribution in code — delete the item and
+the clock is gone, with nothing else to change. The file is only seeded when it does not exist, so
+deleting every item does not bring the preset back; `pi-persist preset` writes it again on demand.
 
 Items live in `~/.pi/agent/pi-persist.json`:
 
@@ -281,26 +281,25 @@ items file before adding it to a machine you care about.
 pi-persist list
 pi-persist add <id> <content> [--channel trailing|section] [--priority n] [--providers a,b] [--tools x,y]
 pi-persist remove <id> [--channel trailing|section]
-pi-persist clock [on|off]
+pi-persist preset
 ```
 
 ```console
-$ pi-persist add when 'at {{datetime}} on {{exec:git rev-parse --abbrev-ref HEAD}}' --priority 5
-added trailing item "when"
+$ pi-persist add git_branch 'on {{exec:git rev-parse --abbrev-ref HEAD}}' --priority 5
+added trailing item "git_branch"
 Takes effect on the next /reload or session start.
 
 $ pi-persist list
 items file: /home/u/.pi/agent/pi-persist.json
-clock: on  (piPersist.clock)
 
-ID    CHANNEL   POLICY      CONTENT
-----  --------  ----------  ---------------------------
-when  trailing  priority=5  at 27/10/2026, 21:43:29 GMT-4 on main
+ID                CHANNEL   POLICY         CONTENT
+----------------  --------  -------------  --------------------------
+current_datetime  trailing  priority=-100  27/10/2026, 22:00:06 GMT-4
+git_branch        trailing  priority=5     on main
 ```
 
 `list` expands templates against the current machine, so a wrong `exec:` shows up immediately
-instead of after a reload. `pi-persist clock off` writes `piPersist.clock` in pi's own
-`settings.json`, preserving every other key.
+instead of after a reload.
 
 The CLI talks to files only — no pi process, no session. Changes take effect on the next `/reload`
 or session start.

@@ -1,18 +1,20 @@
 #!/usr/bin/env bun
 /**
- * `pi-persist` — manage declarative items and the built-in clock.
+ * `pi-persist` — manage declarative items.
  *
  * Deliberately a thin layer over the same functions the extension uses at load
  * (`readItemsFile`, `updateItemsFile`, `parseItemsFile`), so the CLI cannot drift from the runtime
  * representation. It talks to files only: no pi process, no session, no registry. Items take effect
  * on the next `/reload` or session start.
  */
-import { readFileSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { type DeclarativeItem, type ItemChannel, itemsFilePath, readItemsFile, updateItemsFile } from "./items.ts";
-import { readSettingsFromDisk, SETTINGS_KEY } from "./settings.ts";
+import {
+	type DeclarativeItem,
+	type ItemChannel,
+	itemsFilePath,
+	PRESET_ITEMS,
+	readItemsFile,
+	updateItemsFile,
+} from "./items.ts";
 import { expandTemplate } from "./template.ts";
 
 const USAGE = `pi-persist — declarative context items
@@ -22,7 +24,7 @@ Usage:
   pi-persist add <id> <content> [--channel trailing|section] [--priority <n>]
                                  [--providers <a,b>] [--tools <x,y>]
   pi-persist remove <id> [--channel trailing|section]
-  pi-persist clock [on|off]
+  pi-persist preset            write the shipped preset items (current_datetime)
 
 Options:
   --channel    Where the item is injected. Default: trailing.
@@ -45,7 +47,6 @@ Templates available in <content>:
 
 Files:
   items     ${itemsFilePath()}
-  settings  ${join(getAgentDir(), "settings.json")} (key: ${SETTINGS_KEY})
 `;
 
 class UsageError extends Error {}
@@ -151,10 +152,7 @@ function list(argv: readonly string[]): void {
 	parseArgs(argv);
 	const path = itemsFilePath();
 	const { items, errors } = readItemsFile(path);
-	const settings = readSettingsFromDisk();
-
 	console.log(`items file: ${path}`);
-	console.log(`clock: ${settings.clock ? "on" : "off"}  (${SETTINGS_KEY}.clock)`);
 	console.log("");
 
 	if (items.length === 0) {
@@ -188,29 +186,24 @@ function list(argv: readonly string[]): void {
 	}
 }
 
-async function clock(argv: readonly string[]): Promise<void> {
-	const { positional } = parseArgs(argv);
-	const [mode] = positional;
-	if (mode !== undefined && mode !== "on" && mode !== "off") {
-		throw new UsageError(`clock takes "on" or "off", got "${mode}"`);
-	}
-	const next = mode === undefined ? !readSettingsFromDisk().clock : mode === "on";
-
-	// Read-modify-write on pi's settings.json, preserving every other key.
-	const path = join(getAgentDir(), "settings.json");
-	let settings: Record<string, unknown> = {};
-	try {
-		const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) settings = parsed as Record<string, unknown>;
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-	}
-	const existing = settings[SETTINGS_KEY];
-	const block = existing && typeof existing === "object" && !Array.isArray(existing) ? existing : {};
-	settings[SETTINGS_KEY] = { ...block, clock: next };
-	await writeFile(path, `${JSON.stringify(settings, null, 2)}\n`);
-	console.log(`clock ${next ? "on" : "off"} (${SETTINGS_KEY}.clock in ${path})`);
-	console.log("Takes effect on the next /reload.");
+async function preset(argv: readonly string[]): Promise<void> {
+	parseArgs(argv);
+	const existing = readItemsFile().items;
+	let added = 0;
+	await updateItemsFile((file) => {
+		for (const item of PRESET_ITEMS) {
+			const index = file.items.findIndex((entry) => entry.id === item.id && entry.channel === item.channel);
+			if (index >= 0) file.items[index] = { ...item };
+			else {
+				file.items.push({ ...item });
+				added++;
+			}
+		}
+		return file;
+	});
+	console.log(`preset written: ${PRESET_ITEMS.map((item) => item.id).join(", ")}`);
+	if (existing.length > 0) console.log(`${added} added, rest updated in place; your other items are untouched.`);
+	console.log("Takes effect on the next /reload or session start.");
 }
 
 /** Re-exported so tests can exercise the parser without spawning a process. */
@@ -231,8 +224,8 @@ async function main(argv: readonly string[]): Promise<number> {
 			case "rm":
 				await remove(rest);
 				return 0;
-			case "clock": {
-				await clock(rest);
+			case "preset": {
+				await preset(rest);
 				return 0;
 			}
 			case "help":

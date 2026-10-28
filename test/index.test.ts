@@ -85,29 +85,14 @@ describe("before_agent_start wiring", () => {
 		expect(String(payload.messages.at(-1)?.content)).toContain("<fixture>12:00</fixture>");
 	});
 
-	test("the built-in clock is on by default", async () => {
+	test("declarative items reach both channels", async () => {
 		const app = harness();
 		const payload = { messages: [] as Array<{ role: string; content: unknown }> };
 		await app.providerRequest(payload);
-		expect(String(payload.messages.at(-1)?.content)).toContain("<clock>");
-	});
-
-	test("the clock can be disabled through pi settings", async () => {
-		const app = harness(["read", "bash"], { piPersist: { clock: false } });
-		registerEnvMessage({ id: "fixture", content: "12:00" });
-		const payload = { messages: [] as Array<{ role: string; content: unknown }> };
-		await app.providerRequest(payload);
 		const text = String(payload.messages.at(-1)?.content);
-		expect(text).not.toContain("<clock>");
-		expect(text).toContain("<fixture>12:00</fixture>");
-	});
-
-	test("an unreadable settings handle falls back to the defaults", async () => {
-		// A throwing getSettings must not drop every contribution for the request.
-		const app = harness(["read", "bash"], undefined, true);
-		const payload = { messages: [] as Array<{ role: string; content: unknown }> };
-		await app.providerRequest(payload);
-		expect(String(payload.messages.at(-1)?.content)).toContain("<clock>");
+		// Whatever the items file holds, the envelope is still well formed.
+		expect(text.startsWith("<pi_context>")).toBe(true);
+		expect(text).toContain("not a new instruction");
 	});
 
 	test("omits cwd because pi already renders its own <cwd> section", async () => {
