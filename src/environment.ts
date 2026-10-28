@@ -103,6 +103,10 @@ export interface RenderEnvironmentOptions {
 /**
  * Render the section body: base fields in a fixed order, then contributed blocks sorted by id.
  *
+ * Returns the inner body only. Pi wraps every prompt section in `<name>…</name>` itself
+ * (`system-prompt.js`, `buildSystemPromptSections`), so emitting the wrapper here would nest
+ * `<environment_context>` inside an identical outer tag.
+ *
  * Ordering is deterministic on purpose. Pi diffs prompt sections per request and appends a
  * transcript delta for what changed, so an unstable order (registration order, Map iteration,
  * a hash) would report a change on every turn and invalidate the cached prompt prefix.
@@ -129,5 +133,5 @@ export function renderEnvironment(facts: EnvironmentFacts, options: RenderEnviro
 		lines.push(`  <${block.id}${attributes}>${content}</${block.id}>`);
 	}
 
-	return lines.length > 0 ? `<environment_context>\n${lines.join("\n")}\n</environment_context>` : "";
+	return lines.join("\n");
 }

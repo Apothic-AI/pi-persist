@@ -55,7 +55,9 @@ describe("before_agent_start wiring", () => {
 		const app = harness();
 		const { event } = await app.start();
 		const section = event.systemPromptOptions.sections[SECTION_NAME];
-		expect(section).toContain("<environment_context>");
+		// The body carries no wrapper; pi wraps every section in its own `<name>` tag.
+		expect(section).toContain("<shell>");
+		expect(section).not.toContain("<environment_context>");
 		expect(section).toContain("<shell>");
 		// The handler mutates `sections` and returns undefined. Returning a `systemPrompt` override
 		// would drop every other section and re-report the whole prompt as changed each request.
@@ -116,7 +118,7 @@ describe("before_agent_start wiring", () => {
 		expect(empty).toBe("");
 		delete app.event.systemPromptOptions.sections[SECTION_NAME];
 		await app.start();
-		expect(app.event.systemPromptOptions.sections[SECTION_NAME]).toContain("<environment_context>");
+		expect(app.event.systemPromptOptions.sections[SECTION_NAME]).toContain("<shell>");
 	});
 });
 

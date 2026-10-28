@@ -46,10 +46,11 @@ describe("shell detection", () => {
 });
 
 describe("renderEnvironment", () => {
-	test("wraps the fields in environment_context with two-space indent", () => {
+	test("renders the body only, because pi supplies the outer tag", () => {
 		const section = renderEnvironment(facts);
-		expect(section.startsWith("<environment_context>\n  <cwd>")).toBe(true);
-		expect(section.endsWith("</environment_context>")).toBe(true);
+		// Emitting our own wrapper would nest <environment_context> inside pi's identical one.
+		expect(section).not.toContain("<environment_context>");
+		expect(section.startsWith("  <cwd>")).toBe(true);
 		expect(section).toContain("  <shell>/bin/bash</shell>");
 		// Volatile values are deliberately absent: they belong in a per-turn message, where a change
 		// does not re-render the cached prompt prefix.

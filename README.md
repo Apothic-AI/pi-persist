@@ -4,7 +4,7 @@ A pi extension that gives other extensions two ways to put text in front of the 
 section** for facts that hold for the session, and a **trailing developer message** for anything
 that changes or that the model must never lose mid-run.
 
-The section looks like this (Linux box, zsh as `$SHELL`):
+The section looks like this (Linux box, zsh as `$SHELL`) — verbatim as the model receives it:
 
 ```text
 <environment_context>
@@ -14,6 +14,10 @@ The section looks like this (Linux box, zsh as `$SHELL`):
   <pi-mode mode="plan">read-only; nothing has been executed</pi-mode>
 </environment_context>
 ```
+
+Only the inner body is rendered by this extension. Pi wraps every prompt section in `<name>…</name>`
+itself (`buildSystemPromptSections`), so emitting the wrapper here would nest
+`<environment_context>` inside an identical outer tag.
 
 ## Install
 
