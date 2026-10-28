@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { formatDatetime } from "./builtins.ts";
 
 /**
  * Settings for this extension, read from pi's own `settings.json`.
@@ -13,7 +14,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
  * Read per request rather than cached at load: editing `settings.json` and running `/reload`
  * should take effect without a restart.
  */
-export const SETTINGS_KEY = "piEnvContext";
+export const SETTINGS_KEY = "piPersist";
 
 export interface EnvContextSettings {
 	/** Append the current date and time as a trailing item. */
@@ -36,27 +37,6 @@ export function readEnvContextSettings(settings: SettingsSource): EnvContextSett
 	return { clock: typeof block.clock === "boolean" ? block.clock : DEFAULT_SETTINGS.clock };
 }
 
-const FORMATTER = new Intl.DateTimeFormat("en-GB", {
-	year: "numeric",
-	month: "2-digit",
-	day: "2-digit",
-	hour: "2-digit",
-	minute: "2-digit",
-	second: "2-digit",
-	hour12: false,
-	timeZoneName: "short",
-});
-
-/**
- * The current instant as one line: local time with an explicit zone.
- *
- * The zone matters — a bare `2026-10-28 00:52` is ambiguous to a model that does not know where
- * the host is, and the whole point of the item is answering "when is it".
- */
-export function formatClock(now = new Date()): string {
-	return FORMATTER.format(now);
-}
-
 /**
  * Fallback settings reader for callers that have no `pi` handle — tests, and any future
  * non-pi host. Mirrors what pi's settings manager does: read `<agent-dir>/settings.json`.
@@ -73,3 +53,8 @@ export function readSettingsFromDisk(agentDir = getAgentDir()): EnvContextSettin
 
 /** The contribution the clock registers. Exported so tests can assert on it without a registry. */
 export const CLOCK_CONTRIBUTION_ID = "clock";
+
+/** The built-in clock item's text. Shares `formatDatetime` with `{{datetime}}` so the two cannot drift. */
+export function formatClock(now = new Date()): string {
+	return formatDatetime(now, "local");
+}

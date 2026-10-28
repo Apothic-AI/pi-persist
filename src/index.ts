@@ -1,7 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { detectEnvironment, type EnvBlock, renderEnvironment } from "./environment.ts";
-import { appendTrailingMessage, registerEnvMessage } from "./messages.ts";
-import { type ContributionContext, collectContributions } from "./registry.ts";
+import { itemsFilePath, readItemsFile } from "./items.ts";
+import { appendTrailingMessage, type MessageContext, registerEnvMessage } from "./messages.ts";
+import { type ContributionContext, collectContributions, registerEnvContribution } from "./registry.ts";
 import {
 	CLOCK_CONTRIBUTION_ID,
 	DEFAULT_SETTINGS,
@@ -9,6 +10,7 @@ import {
 	formatClock,
 	readEnvContextSettings,
 } from "./settings.ts";
+import { expandTemplate } from "./template.ts";
 
 /** Prompt section name. Pi renders it as `<environment_context>…</environment_context>`. */
 export const SECTION_NAME = "environment_context";
@@ -63,7 +65,52 @@ export function settingsForPi(pi: Pick<ExtensionAPI, "getSettings">): EnvContext
 	}
 }
 
+/**
+ * Register every item from the items file into the live registries.
+ *
+ * Declarative items take the same path as programmatic ones, so rendering cannot tell them apart.
+ * Returns the unregister functions plus any validation errors, which are surfaced rather than
+ * thrown: a bad entry must not prevent a session from starting.
+ */
+export function loadDeclarativeItems(path = itemsFilePath()): { unregister: Array<() => void>; errors: string[] } {
+	const { items, errors } = readItemsFile(path);
+	const unregister: Array<() => void> = [];
+	for (const item of items) {
+		const content = ({ cwd }: ContributionContext | MessageContext) =>
+			expandTemplate(item.content, { cwd }) || undefined;
+		if (item.channel === "section") {
+			unregister.push(
+				registerEnvContribution({
+					id: item.id,
+					priority: item.priority,
+					providers: item.providers,
+					activeTools: item.activeTools,
+					content,
+				}),
+			);
+		} else {
+			unregister.push(
+				registerEnvMessage({
+					id: item.id,
+					priority: item.priority,
+					providers: item.providers,
+					activeTools: item.activeTools,
+					content,
+				}),
+			);
+		}
+	}
+	return { unregister, errors };
+}
+
 export default function envContext(pi: ExtensionAPI) {
+	// Declarative items are loaded once per session; `/reload` re-runs this and picks up edits.
+	const declarative = loadDeclarativeItems();
+	if (declarative.errors.length > 0) {
+		console.warn(`pi-persist: ${declarative.errors.length} item(s) skipped in ${itemsFilePath()}`);
+		for (const error of declarative.errors) console.warn(`  ${error}`);
+	}
+
 	// Built-in trailing item. Registered here rather than by a consumer because it answers a
 	// question every session has: what time is it, on this host, right now.
 	registerEnvMessage({

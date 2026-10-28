@@ -14,8 +14,8 @@
  *   rather than the symbol keeps old and new writers from silently corrupting each other's entries.
  */
 
-export const REGISTRY_SYMBOL = Symbol.for("pi-add-env/contributors/v1");
-export const REGISTRY_PROTOCOL = "pi-add-env/contributors";
+export const REGISTRY_SYMBOL = Symbol.for("pi-persist/contributors/v1");
+export const REGISTRY_PROTOCOL = "pi-persist/contributors";
 export const REGISTRY_VERSION = 1;
 
 export interface EnvironmentContribution {

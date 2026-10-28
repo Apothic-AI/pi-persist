@@ -44,12 +44,12 @@ describe("readSettingsFromDisk", () => {
 	});
 
 	function freshDir(): string {
-		dir = mkdtempSync(join(tmpdir(), "pi-env-context-settings-"));
+		dir = mkdtempSync(join(tmpdir(), "pi-persist-settings-"));
 		return dir;
 	}
 
 	test("falls back to defaults when settings.json is missing", () => {
-		expect(readSettingsFromDisk(join(tmpdir(), "pi-env-context-missing-dir"))).toEqual(DEFAULT_SETTINGS);
+		expect(readSettingsFromDisk(join(tmpdir(), "pi-persist-missing-dir"))).toEqual(DEFAULT_SETTINGS);
 	});
 
 	test("falls back to defaults when the file is malformed", () => {

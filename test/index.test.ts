@@ -93,7 +93,7 @@ describe("before_agent_start wiring", () => {
 	});
 
 	test("the clock can be disabled through pi settings", async () => {
-		const app = harness(["read", "bash"], { piEnvContext: { clock: false } });
+		const app = harness(["read", "bash"], { piPersist: { clock: false } });
 		registerEnvMessage({ id: "fixture", content: "12:00" });
 		const payload = { messages: [] as Array<{ role: string; content: unknown }> };
 		await app.providerRequest(payload);

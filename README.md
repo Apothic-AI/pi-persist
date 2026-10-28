@@ -1,4 +1,4 @@
-# pi-env-context
+# pi-persist
 
 A pi extension that gives other extensions two ways to put text in front of the model: a **prompt
 section** for facts that hold for the session, and a **trailing developer message** for anything
@@ -22,13 +22,13 @@ itself (`buildSystemPromptSections`), so emitting the wrapper here would nest
 ## Install
 
 ```
-pi install npm:@apothic-ai/pi-env-context
+pi install npm:@apothic-ai/pi-persist
 ```
 
 or from a checkout:
 
 ```
-pi install /path/to/pi-env-context
+pi install /path/to/pi-persist
 ```
 
 ## Two channels, chosen by the contributor
@@ -91,7 +91,7 @@ contributor's judgement.
 ## Section API
 
 ```ts
-import { registerEnvContribution } from "@apothic-ai/pi-env-context";
+import { registerEnvContribution } from "@apothic-ai/pi-persist";
 
 const unregister = registerEnvContribution({
 	id: "pi-mode",
@@ -128,7 +128,7 @@ in bash — reporting zsh would be wrong in a way the model cannot detect.
 ## Trailing API
 
 ```ts
-import { registerEnvMessage } from "@apothic-ai/pi-env-context";
+import { registerEnvMessage } from "@apothic-ai/pi-persist";
 
 const unregister = registerEnvMessage({
 	id: "clock",
@@ -174,13 +174,13 @@ tags only double-escapes them.
 
 ## Settings
 
-Configuration lives in pi's own `settings.json` under a `piEnvContext` namespace. Pi's settings
+Configuration lives in pi's own `settings.json` under a `piPersist` namespace. Pi's settings
 schema declares `additionalProperties: true`, so the key survives validation and is readable through
 `pi.getSettings()`.
 
 ```json
 {
-  "piEnvContext": {
+  "piPersist": {
     "clock": true
   }
 }
@@ -200,16 +200,121 @@ Pi 1.4 offers no way for an extension to contribute a row to `/settings` (`Setti
 takes a fixed option list and `ExtensionAPI` exposes only `getSettings()`), so this file is the
 whole surface.
 
+## Declarative items
+
+Everything above is a programmatic API: an extension calls `register…` with a function, which is
+what makes per-request values possible. A second path covers the other case — a static value with a
+policy, added without writing any code. Both feed the same registries, so rendering cannot tell them
+apart.
+
+Items live in `~/.pi/agent/pi-persist.json`:
+
+```json
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "when",
+      "channel": "trailing",
+      "content": "at {{datetime}} on {{exec:git rev-parse --abbrev-ref HEAD}}",
+      "priority": 5,
+      "providers": ["subrouter"],
+      "activeTools": ["read"]
+    }
+  ]
+}
+```
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `id` | yes | Unique per channel. Becomes the XML tag name. |
+| `channel` | yes | `trailing` (per request, uncached) or `section` (cached with the prompt). |
+| `content` | yes | Body text, with `{{…}}` templates expanded per request. |
+| `priority` | no | Lower sorts first. Default `0`. |
+| `providers` | no | Skip unless the active provider is listed. |
+| `activeTools` | no | Skip unless every listed tool is active. |
+
+A malformed entry is skipped and reported rather than thrown, so one bad item cannot stop a session
+from starting. Run `pi-persist list` to see what was skipped and why.
+
+Declarative items are loaded once at extension load, so `/reload` picks up an edit.
+
+## Templates
+
+Two forms: `{{name}}` and `{{name:argument}}`. Inner whitespace is ignored.
+
+| Template | Result |
+| --- | --- |
+| `{{datetime}}` | local date and time with zone — `28/10/2026, 01:32:44 GMT-4` |
+| `{{datetime:iso}}` | ISO 8601 |
+| `{{datetime:date}}` | local date only |
+| `{{datetime:time}}` | local time only |
+| `{{datetime:unix}}` | seconds since the epoch |
+| `{{exec:<command>}}` | trimmed stdout of a shell command, run on every request |
+
+`datetime` is the only built-in for now. Anything else comes from `exec:`:
+
+```text
+{{exec:echo $HOME}}                              # an environment variable
+{{exec:git rev-parse --abbrev-ref HEAD}}         # the current branch
+{{exec:date +%H:%M}}                             # the clock, your format
+```
+
+There is deliberately **no environment-variable syntax**. `exec:` covers it — one mechanism instead
+of one placeholder per source.
+
+**Explicit only.** A command never runs unless the item author wrote `{{exec:…}}`. A bare `{{NAME}}`
+is not an environment lookup, and unknown placeholders are left verbatim and reported, so a typo
+stays visible instead of silently becoming an empty string.
+
+**No caching.** A command runs on every request, because a stale clock is worse than a fresh one and
+`echo`/`date` cost microseconds. A command that hangs is killed after three seconds rather than
+stalling the request.
+
+**This is arbitrary code execution from a config file.** Anyone who can edit `pi-persist.json` can
+already run commands as you, so it is not a privilege boundary — but it does mean you should read an
+items file before adding it to a machine you care about.
+
+## CLI
+
+```sh
+pi-persist list
+pi-persist add <id> <content> [--channel trailing|section] [--priority n] [--providers a,b] [--tools x,y]
+pi-persist remove <id> [--channel trailing|section]
+pi-persist clock [on|off]
+```
+
+```console
+$ pi-persist add when 'at {{datetime}} on {{exec:git rev-parse --abbrev-ref HEAD}}' --priority 5
+added trailing item "when"
+Takes effect on the next /reload or session start.
+
+$ pi-persist list
+items file: /home/u/.pi/agent/pi-persist.json
+clock: on  (piPersist.clock)
+
+ID    CHANNEL   POLICY      CONTENT
+----  --------  ----------  ---------------------------
+when  trailing  priority=5  at 27/10/2026, 21:43:29 GMT-4 on main
+```
+
+`list` expands templates against the current machine, so a wrong `exec:` shows up immediately
+instead of after a reload. `pi-persist clock off` writes `piPersist.clock` in pi's own
+`settings.json`, preserving every other key.
+
+The CLI talks to files only — no pi process, no session. Changes take effect on the next `/reload`
+or session start.
+
 ## Without importing the package
 
 Both registries live on `globalThis`, guarded by a symbol plus a `protocol`/`version` pair:
 
 ```ts
-const key = Symbol.for("pi-add-env/contributors/v1");     // section
-const key = Symbol.for("pi-add-env/messages/v1");         // trailing
+const key = Symbol.for("pi-persist/contributors/v1");     // section
+const key = Symbol.for("pi-persist/messages/v1");         // trailing
 
 const registry = ((globalThis as any)[key] ??= {
-	protocol: "pi-add-env/contributors",  // or "pi-add-env/messages"
+	protocol: "pi-persist/contributors",  // or "pi-persist/messages"
 	version: 1,
 	contributions: new Map(),
 });

@@ -20,12 +20,12 @@
  */
 import { sanitizeEnvValue } from "./environment.ts";
 
-export const MESSAGE_REGISTRY_SYMBOL = Symbol.for("pi-add-env/messages/v1");
-export const MESSAGE_REGISTRY_PROTOCOL = "pi-add-env/messages";
+export const MESSAGE_REGISTRY_SYMBOL = Symbol.for("pi-persist/messages/v1");
+export const MESSAGE_REGISTRY_PROTOCOL = "pi-persist/messages";
 export const MESSAGE_REGISTRY_VERSION = 1;
 
 /** Prefixed onto `customType` style ids so a reader can tell where content came from. */
-export const MESSAGE_TYPE_PREFIX = "pi-add-env/";
+export const MESSAGE_TYPE_PREFIX = "pi-persist/";
 
 export interface MessageContribution {
 	/** Unique. Registering the same id again replaces the earlier contribution. */
