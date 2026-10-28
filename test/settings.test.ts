@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	CLOCK_CONTRIBUTION_ID,
@@ -36,26 +37,31 @@ describe("readEnvContextSettings", () => {
 });
 
 describe("readSettingsFromDisk", () => {
-	const dir = join(import.meta.dir, ".tmp-settings");
-
+	// A temp dir, not a path under test/, so nothing can be committed by accident.
+	let dir = "";
 	afterEach(() => {
-		// best effort; the directory is recreated per test that needs it
+		dir = "";
 	});
 
+	function freshDir(): string {
+		dir = mkdtempSync(join(tmpdir(), "pi-env-context-settings-"));
+		return dir;
+	}
+
 	test("falls back to defaults when settings.json is missing", () => {
-		expect(readSettingsFromDisk(join(dir, "nope"))).toEqual(DEFAULT_SETTINGS);
+		expect(readSettingsFromDisk(join(tmpdir(), "pi-env-context-missing-dir"))).toEqual(DEFAULT_SETTINGS);
 	});
 
 	test("falls back to defaults when the file is malformed", () => {
-		mkdirSync(dir, { recursive: true });
-		writeFileSync(join(dir, "settings.json"), "{ not json");
-		expect(readSettingsFromDisk(dir)).toEqual(DEFAULT_SETTINGS);
+		const target = freshDir();
+		writeFileSync(join(target, "settings.json"), "{ not json");
+		expect(readSettingsFromDisk(target)).toEqual(DEFAULT_SETTINGS);
 	});
 
 	test("reads the namespace from a real settings file", () => {
-		mkdirSync(dir, { recursive: true });
-		writeFileSync(join(dir, "settings.json"), JSON.stringify({ [SETTINGS_KEY]: { clock: false } }));
-		expect(readSettingsFromDisk(dir)).toEqual({ clock: false });
+		const target = freshDir();
+		writeFileSync(join(target, "settings.json"), JSON.stringify({ [SETTINGS_KEY]: { clock: false } }));
+		expect(readSettingsFromDisk(target)).toEqual({ clock: false });
 	});
 });
 
