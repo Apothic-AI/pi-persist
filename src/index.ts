@@ -71,14 +71,17 @@ export default function envContext(pi: ExtensionAPI) {
 
 export type { EnvBlock, EnvField, EnvironmentFacts, ShellFacts } from "./environment.ts";
 export { detectEnvironment, detectShell, escapeXml, renderEnvironment } from "./environment.ts";
-export type { MessageContext, MessageContribution, TrailingMessageOptions } from "./messages.ts";
+export type { MessageContext, MessageContribution, ResolvedMessage, TrailingMessageOptions } from "./messages.ts";
 export {
 	appendTrailingMessage,
 	collectMessages,
+	ENVELOPE_TAG,
 	MESSAGE_TYPE_PREFIX,
 	payloadArrayKey,
 	registerEnvMessage,
+	renderTrailingMessage,
 	supportsTrailingMessage,
+	tagNameFor,
 } from "./messages.ts";
 export type { ContributionContext, EnvironmentContribution } from "./registry.ts";
 export {

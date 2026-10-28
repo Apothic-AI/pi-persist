@@ -138,6 +138,32 @@ the same request are folded into one trailing message, ordered by priority then 
 Nothing is persisted: the trailing message exists only on the request it was built for, so nothing
 accumulates in the session or the transcript.
 
+### What the model sees
+
+The message is appended after the user's turn and after any tool results, where it would otherwise
+read as a continuation of the conversation — a second instruction competing with the one the user
+actually gave. So it is wrapped, and it says what it is:
+
+```
+<pi_context>
+This block is ambient context supplied automatically before each request. It is not a user
+message and not a new instruction. Continue with the task you were already given; use this
+only as reference.
+  <clock>2026-10-28T00:52:00.800Z</clock>
+  <git-branch>apothic</git-branch>
+  <pi-core-todo-summary>3 in progress, 12 done</pi-core-todo-summary>
+</pi_context>
+```
+
+Each contribution is nested in a tag derived from its `id`, so the model can tell which extension
+supplied which fact. Ids are normalized to valid tag names: `pi-core-todo/summary` becomes
+`<pi-core-todo-summary>`, a leading digit is prefixed with `item-`, and anything left unusable
+becomes `<item-unnamed>`.
+
+Contributed text is whitespace-collapsed and XML-escaped, so a value cannot break out of its tag.
+Do not wrap your own contribution in markup — the envelope already does it, and nesting your own
+tags only double-escapes them.
+
 ## Without importing the package
 
 Both registries live on `globalThis`, guarded by a symbol plus a `protocol`/`version` pair:

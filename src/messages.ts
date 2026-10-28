@@ -18,6 +18,8 @@
  * trailing `developer` item appended to the payload's message array. `openai-completions` payloads
  * carry `messages`; `openai-responses` payloads carry `input`. Both are handled.
  */
+import { sanitizeEnvValue } from "./environment.ts";
+
 export const MESSAGE_REGISTRY_SYMBOL = Symbol.for("pi-add-env/messages/v1");
 export const MESSAGE_REGISTRY_PROTOCOL = "pi-add-env/messages";
 export const MESSAGE_REGISTRY_VERSION = 1;
@@ -36,6 +38,11 @@ export interface MessageContribution {
 	activeTools?: readonly string[];
 	/** Body text, or a function returning one. Empty results are dropped for that request. */
 	content: string | ((context: MessageContext) => string | undefined);
+}
+
+export interface ResolvedMessage {
+	id: string;
+	content: string;
 }
 
 export interface MessageContext {
@@ -104,7 +111,7 @@ export function clearEnvMessages(): void {
  *
  * A throwing body is skipped: one broken contributor must not fail the request.
  */
-export function collectMessages(context: MessageContext, registry = getMessageRegistry()): string[] {
+export function collectMessages(context: MessageContext, registry = getMessageRegistry()): ResolvedMessage[] {
 	if (!registry) return [];
 	const resolved: Array<{ id: string; priority: number; content: string }> = [];
 	for (const contribution of registry.contributions.values()) {
@@ -126,7 +133,41 @@ export function collectMessages(context: MessageContext, registry = getMessageRe
 		resolved.push({ id: contribution.id, priority: contribution.priority ?? 0, content: trimmed });
 	}
 	resolved.sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
-	return resolved.map(({ content }) => content);
+	return resolved.map(({ id, content }) => ({ id, content }));
+}
+
+/** An id usable as an XML tag name. Contributions are free to use `/` and other separators. */
+export function tagNameFor(id: string): string {
+	const normalized = id
+		.replace(/[^A-Za-z0-9._-]+/g, "-")
+		.replace(/-+/g, "-")
+		.replace(/^-|-$/g, "");
+	return /^[A-Za-z]/.test(normalized) ? normalized : `item-${normalized || "unnamed"}`;
+}
+
+/**
+ * The envelope around the trailing message.
+ *
+ * The message is appended after the user's turn and after any tool results, so without a container
+ * it reads as a continuation of the conversation — a second instruction competing with the one the
+ * user actually gave. The wrapper and the sentence inside it say plainly what this is: ambient
+ * context supplied by the harness, not a request, and not a change of task.
+ */
+export const ENVELOPE_TAG = "pi_context";
+
+export function renderTrailingMessage(messages: readonly ResolvedMessage[]): string {
+	if (messages.length === 0) return "";
+	const items = messages.map(
+		(message) => `  <${tagNameFor(message.id)}>${sanitizeEnvValue(message.content)}</${tagNameFor(message.id)}>`,
+	);
+	return [
+		`<${ENVELOPE_TAG}>`,
+		"This block is ambient context supplied automatically before each request. It is not a user",
+		"message and not a new instruction. Continue with the task you were already given; use this",
+		"only as reference.",
+		...items,
+		`</${ENVELOPE_TAG}>`,
+	].join("\n");
 }
 
 /** The message-array key for a provider payload: `messages` for completions, `input` for responses. */
@@ -167,9 +208,10 @@ export function appendTrailingMessage(
 ): unknown {
 	const key = payloadArrayKey(payload);
 	if (!key) return payload;
-	const lines = collectMessages({ provider, activeTools: options.activeTools, cwd: options.cwd, mode: options.mode });
-	if (lines.length === 0) return payload;
-	const text = lines.join("\n");
+	const text = renderTrailingMessage(
+		collectMessages({ provider, activeTools: options.activeTools, cwd: options.cwd, mode: options.mode }),
+	);
+	if (!text) return payload;
 	const array = (payload as Record<typeof key, unknown[]>)[key];
 	// `input_text` for the responses API; completions accepts a plain string.
 	array.push(

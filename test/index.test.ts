@@ -74,7 +74,8 @@ describe("before_agent_start wiring", () => {
 		const app = harness();
 		const payload = { messages: [{ role: "user", content: "hi" }] as Array<{ role: string; content: unknown }> };
 		await app.providerRequest(payload);
-		expect(payload.messages.at(-1)).toEqual({ role: "developer", content: "12:00" });
+		expect(payload.messages.at(-1)?.role).toBe("developer");
+		expect(String(payload.messages.at(-1)?.content)).toContain("<clock>12:00</clock>");
 	});
 
 	test("omits cwd because pi already renders its own <cwd> section", async () => {
