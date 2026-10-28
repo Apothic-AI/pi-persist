@@ -1,7 +1,7 @@
-import { accessSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { accessSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
 
 /**
  * Declarative items, stored on disk so they can be edited by hand or by the CLI.
@@ -56,6 +56,20 @@ export const PRESET_ITEMS: readonly DeclarativeItem[] = [
 
 export function itemsFilePath(agentDir = getAgentDir()): string {
 	return join(agentDir, ITEMS_FILENAME);
+}
+
+/**
+ * Project-local items, beside pi's other project configuration (`<cwd>/.pi/`).
+ *
+ * Read only when the project is trusted, and merged over the global file — see `loadLayeredItems`.
+ */
+export function projectItemsFilePath(cwd: string): string {
+	return join(cwd, CONFIG_DIR_NAME, ITEMS_FILENAME);
+}
+
+/** Registry key for an item. Two files can hold the same id as long as the channel differs. */
+export function itemKey(item: Pick<DeclarativeItem, "id" | "channel">): string {
+	return `${item.channel}:${item.id}`;
 }
 
 const ITEM_ID = /^[A-Za-z][\w.:-]*$/;
@@ -149,6 +163,73 @@ export function readItemsFile(path = itemsFilePath()): ValidationResult {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return { items: [], errors: [] };
 		return { items: [], errors: [`could not read ${path}: ${String(error)}`] };
 	}
+}
+
+export interface LayeredItems extends ValidationResult {
+	/** Keys (`channel:id`) where a project entry replaced a global one. */
+	overridden: string[];
+	/** How many items the project file contributed. Zero unless it was read. */
+	projectCount: number;
+	globalPath: string;
+	projectPath: string;
+	/** A project file exists but was not read because the project is not trusted. */
+	skippedUntrusted: boolean;
+}
+
+export interface LayeredItemsOptions {
+	cwd: string;
+	/** Pi's answer for this project. Untrusted projects contribute nothing. */
+	projectTrusted: boolean;
+	agentDir?: string;
+}
+
+/**
+ * Global items with the trusted project's items merged over them, project winning on `channel:id`.
+ *
+ * Layering rather than choosing one file: the global file carries machine-wide defaults, the
+ * project file carries what only makes sense in that repository, and a project entry that names an
+ * existing global id is how you override a default without deleting it. Both files feed the same
+ * registries, so rendering cannot tell which file an item came from.
+ *
+ * Errors carry the path they came from; a broken project file must not discard the global items.
+ */
+export function loadLayeredItems(options: LayeredItemsOptions): LayeredItems {
+	const globalPath = itemsFilePath(options.agentDir);
+	const projectPath = projectItemsFilePath(options.cwd);
+	const global = readItemsFile(globalPath);
+	const errors = global.errors.map((error) => `${globalPath}: ${error}`);
+
+	// Map keeps insertion order: an override replaces in place, a project-only item appends.
+	const merged = new Map<string, DeclarativeItem>();
+	for (const item of global.items) merged.set(itemKey(item), item);
+
+	const overridden: string[] = [];
+	let skippedUntrusted = false;
+	let projectCount = 0;
+	if (existsSync(projectPath)) {
+		if (!options.projectTrusted) {
+			skippedUntrusted = true;
+		} else {
+			const project = readItemsFile(projectPath);
+			errors.push(...project.errors.map((error) => `${projectPath}: ${error}`));
+			for (const item of project.items) {
+				const key = itemKey(item);
+				if (merged.has(key)) overridden.push(key);
+				merged.set(key, item);
+			}
+			projectCount = project.items.length;
+		}
+	}
+
+	return {
+		items: [...merged.values()],
+		errors,
+		overridden,
+		projectCount,
+		globalPath,
+		projectPath,
+		skippedUntrusted,
+	};
 }
 
 let writeQueue: Promise<unknown> = Promise.resolve();

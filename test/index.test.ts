@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import envContext, { buildEnvironmentSection, DEFAULT_OMIT, SECTION_NAME } from "../src/index.ts";
 import { clearEnvMessages, registerEnvMessage } from "../src/messages.ts";
@@ -11,7 +14,17 @@ afterEach(() => {
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 
-function harness(activeTools: string[] = ["read", "bash"], settings: object = {}, settingsThrows = false) {
+function harness(
+	activeTools: string[] = ["read", "bash"],
+	settings: object = {},
+	settingsThrows = false,
+	options: {
+		cwd?: string;
+		projectTrusted?: boolean;
+		hasUI?: boolean;
+		notify?: (message: string, type?: string) => void;
+	} = {},
+) {
 	const handlers = new Map<string, Handler>();
 	envContext({
 		on: (event: string, handler: Handler) => {
@@ -26,10 +39,14 @@ function harness(activeTools: string[] = ["read", "bash"], settings: object = {}
 	} as unknown as ExtensionAPI);
 
 	const ctx = {
-		cwd: "/home/u/project",
+		cwd: options.cwd ?? "/home/u/project",
 		provider: "relayfast",
 		mode: "tui",
 		model: { provider: "relayfast" },
+		// Pi answers this per project; the harness decides, since there is no trust store on disk.
+		isProjectTrusted: () => options.projectTrusted ?? false,
+		hasUI: options.hasUI ?? false,
+		ui: { notify: options.notify ?? (() => {}) },
 		// Dedup reads the active branch; an empty one means "nothing injected yet".
 		sessionManager: { buildContextEntries: () => [] as unknown[] },
 	};
@@ -150,5 +167,109 @@ describe("cross-extension registration without importing this package", () => {
 		registry.contributions.set("foreign", { id: "foreign", content: "from outside" });
 		const { event } = await harness().start();
 		expect(event.systemPromptOptions.sections[SECTION_NAME]).toContain("from outside");
+	});
+});
+
+describe("project-local items", () => {
+	const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+
+	afterEach(() => {
+		if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+	});
+
+	/**
+	 * A temp agent dir and a temp project dir. `globalItems` overrides the seeded preset, which lets
+	 * a test drive an override without touching the real config.
+	 */
+	function fixture(globalItems?: unknown[], projectItems?: unknown[]): string {
+		const agentDir = mkdtempSync(join(tmpdir(), "pi-persist-agent-"));
+		const cwd = mkdtempSync(join(tmpdir(), "pi-persist-cwd-"));
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		if (globalItems) {
+			writeFileSync(join(agentDir, "pi-persist.json"), JSON.stringify({ version: 1, items: globalItems }));
+		}
+		mkdirSync(join(cwd, ".pi"), { recursive: true });
+		writeFileSync(
+			join(cwd, ".pi", "pi-persist.json"),
+			JSON.stringify({
+				version: 1,
+				items: projectItems ?? [{ id: "repo_notes", channel: "section", content: "project-scoped note" }],
+			}),
+		);
+		return cwd;
+	}
+
+	test("a trusted project's items render in the section", async () => {
+		const cwd = fixture();
+		const app = harness(["read"], {}, false, { cwd, projectTrusted: true });
+		const { event } = await app.start();
+
+		expect(event.systemPromptOptions.sections[SECTION_NAME]).toContain("<repo_notes>project-scoped note</repo_notes>");
+	});
+
+	test("an untrusted project's items stay out, and the global items still render", async () => {
+		const cwd = fixture();
+		const app = harness(["read"], {}, false, { cwd, projectTrusted: false });
+		const { event } = await app.start();
+		const section = event.systemPromptOptions.sections[SECTION_NAME];
+
+		expect(section).not.toContain("project-scoped note");
+		// The built-in environment block is global and must survive a refused project.
+		expect(section).toContain("<shell>");
+	});
+
+	test("a project item overrides a global item with the same channel:id", async () => {
+		const cwd = fixture([{ id: "repo_notes", channel: "section", content: "global note" }]);
+		const app = harness(["read"], {}, false, { cwd, projectTrusted: true });
+		const { event } = await app.start();
+		const section = event.systemPromptOptions.sections[SECTION_NAME];
+
+		expect(section).toContain("project-scoped note");
+		expect(section).not.toContain("global note");
+	});
+
+	test("reports loaded project items through the UI when there is one", async () => {
+		const cwd = fixture();
+		const notices: string[] = [];
+		const app = harness(["read"], {}, false, {
+			cwd,
+			projectTrusted: true,
+			hasUI: true,
+			notify: (message) => notices.push(message),
+		});
+		await app.start();
+
+		// A project file changes the system prompt, so loading it is never silent.
+		expect(notices.join("\n")).toContain(`loaded 1 item(s) from ${join(cwd, ".pi", "pi-persist.json")}`);
+	});
+
+	test("warns instead of loading when the project is not trusted", async () => {
+		const cwd = fixture();
+		const notices: string[] = [];
+		const app = harness(["read"], {}, false, {
+			cwd,
+			projectTrusted: false,
+			hasUI: true,
+			notify: (message) => notices.push(message),
+		});
+		await app.start();
+
+		expect(notices.join("\n")).toContain("the project is not trusted");
+	});
+
+	test("the same override applies to the trailing channel", async () => {
+		const cwd = fixture(
+			[{ id: "clock", channel: "trailing", content: "global clock" }],
+			[{ id: "clock", channel: "trailing", content: "project clock" }],
+		);
+		const app = harness(["read"], {}, false, { cwd, projectTrusted: true });
+		const payload = { messages: [] as unknown[] };
+		await app.start();
+		await app.providerRequest(payload);
+
+		const trailing = JSON.stringify(payload.messages);
+		expect(trailing).toContain("project clock");
+		expect(trailing).not.toContain("global clock");
 	});
 });

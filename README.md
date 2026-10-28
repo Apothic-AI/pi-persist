@@ -30,7 +30,8 @@ pi install /path/to/pi-persist
 ```
 
 That is the whole setup. On first run the extension writes
-`~/.pi/agent/pi-persist.json` with one preset item — the current date and time.
+`~/.pi/agent/pi-persist.json` with one preset item — the current date and time. A repository can add
+its own items in `.pi/pi-persist.json`; see [project items](#project-items).
 
 ## The two channels
 
@@ -120,6 +121,41 @@ apart.
 A malformed entry is skipped and reported rather than thrown, so one bad item cannot stop a session
 from starting. `pi-persist list` shows what was skipped and why.
 
+### Project items
+
+A project can carry items of its own in `<cwd>/.pi/pi-persist.json` — the same schema, beside pi's
+other project configuration. They are **merged over** the global file, and a project item wins over a
+global item with the same `channel:id`:
+
+```console
+$ pi-persist add repo_notes 'branch {{exec:git rev-parse --abbrev-ref HEAD}}' --channel section --project
+added section item "repo_notes" in /repo/.pi/pi-persist.json
+```
+
+|  | Global (`~/.pi/agent/`) | Project (`<cwd>/.pi/`) |
+| --- | --- | --- |
+| Applies to | every session | sessions started in that directory |
+| Loaded when | always | the project is trusted |
+| Same `channel:id` | loses | wins |
+
+Why layer instead of picking one file: the global file holds machine-wide defaults, the project file
+holds what only makes sense in that repository, and naming an existing global id in the project file
+is how you override a default without deleting it.
+
+**Trust gating.** Project items are read only when pi reports the project as trusted, which is
+decided *after* extensions load — so they are loaded at `session_start` rather than at import, and
+again on the first `before_agent_start`. A refused project contributes nothing and says so. A file
+that appears mid-session, or a trust decision that changes, is picked up on the next session start or
+`/reload`.
+
+> [!NOTE]
+> Pi skips its trust prompt entirely when a project holds no trust-requiring resources —
+> `.pi/settings.json`, `.pi/extensions`, `.pi/mcp.json` and friends. A repository whose only project
+> config is `.pi/pi-persist.json` is therefore trusted without ever being asked, and its items load
+> on `git clone` alone. That is pi's rule for non-trust-requiring resources, not this extension's,
+> so treat a project items file as untrusted input: read it before you work in a repository you did
+> not write. Loading is never silent — the extension reports how many items a project contributed.
+
 ### The preset
 
 On first run the file is created with:
@@ -178,24 +214,30 @@ of one placeholder per source.
 
 ```sh
 pi-persist list
-pi-persist add <id> <content> [--channel trailing|section] [--priority n] [--providers a,b] [--tools x,y]
-pi-persist remove <id> [--channel trailing|section]
+pi-persist add <id> <content> [--channel trailing|section] [--priority n] [--providers a,b] [--tools x,y] [--project]
+pi-persist remove <id> [--channel trailing|section] [--project]
 pi-persist preset
 ```
 
+`--project` targets `<cwd>/.pi/pi-persist.json` instead of the global file.
+
 ```console
 $ pi-persist add git_branch 'on {{exec:git rev-parse --abbrev-ref HEAD}}' --priority 5
-added trailing item "git_branch"
+added trailing item "git_branch" in /home/u/.pi/agent/pi-persist.json
 Takes effect on the next /reload or session start.
 
 $ pi-persist list
 items file: /home/u/.pi/agent/pi-persist.json
 
-ID                CHANNEL   POLICY         CONTENT
-----------------  --------  -------------  --------------------------
-current_datetime  trailing  priority=-100  Tuesday, 27/10/2026, 22:00:06 GMT-4
-git_branch        trailing  priority=5     on main
+ID                CHANNEL   SOURCE  POLICY         CONTENT
+----------------  --------  ------  -------------  --------------------------
+current_datetime  trailing  global  priority=-100  Tuesday, 27/10/2026, 22:00:06 GMT-4
+git_branch        trailing  global  priority=5     on main
 ```
+
+`list` shows the **effective** set — both files, merged — with the source of each item, so an
+override is visible as one row rather than two. When a project file is present it is named above the
+table, together with the `channel:id` keys it overrides.
 
 `list` expands templates against the **current machine**, so a broken `exec:` shows up immediately
 instead of after a reload. The CLI talks to files only — no pi process, no session. Changes take
@@ -299,11 +341,13 @@ in bash — reporting zsh would be wrong in a way the model cannot detect.
 | --- | --- | --- |
 | Registered contributions | a `Map` on `globalThis` | the pi process |
 | Declarative items | `~/.pi/agent/pi-persist.json` | on disk |
+| Project items | `<cwd>/.pi/pi-persist.json` | on disk, read only when the project is trusted |
 | Injected output | never written — built per request | one request |
 | Settings (`piPersist` namespace) | `~/.pi/agent/settings.json` | on disk |
 
-Nothing accumulates in the session or transcript: contributions are registered at load and rendered
-per request, never persisted as messages by this extension.
+Nothing accumulates in the session or transcript: contributions are registered once (the global
+items at load, the merged set at session start) and rendered per request, never persisted as messages
+by this extension.
 
 The registries live on `globalThis` under a symbol plus a `protocol`/`version` pair, because pi's
 extension API offers no inter-extension channel and a session can load the same package twice (an npm

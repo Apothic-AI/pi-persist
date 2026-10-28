@@ -1,6 +1,6 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { detectEnvironment, type EnvBlock, renderEnvironment } from "./environment.ts";
-import { ensureItemsFile, itemsFilePath, readItemsFile } from "./items.ts";
+import { ensureItemsFile, itemsFilePath, loadLayeredItems, readItemsFile } from "./items.ts";
 import { appendTrailingMessage, type MessageContext, registerEnvMessage } from "./messages.ts";
 import { type ContributionContext, collectContributions, registerEnvContribution } from "./registry.ts";
 import { expandTemplate } from "./template.ts";
@@ -55,11 +55,23 @@ export function buildEnvironmentSection(options: BuildSectionOptions): string {
  * Declarative items take the same path as programmatic ones, so rendering cannot tell them apart.
  * Returns the unregister functions plus any validation errors, which are surfaced rather than
  * thrown: a bad entry must not prevent a session from starting.
+ *
+ * Pass a path to load one file, or `{ cwd, projectTrusted }` to layer the project file over the
+ * global one. A string keeps the single-file behaviour the CLI and older callers rely on.
  */
-export function loadDeclarativeItems(path = itemsFilePath()): { unregister: Array<() => void>; errors: string[] } {
-	const { items, errors } = readItemsFile(path);
+export function loadDeclarativeItems(source: string | DeclarativeLoadOptions = itemsFilePath()): DeclarativeLoadResult {
+	const layered =
+		typeof source === "string"
+			? {
+					...readItemsFile(source),
+					overridden: [] as string[],
+					projectCount: 0,
+					projectPath: source,
+					skippedUntrusted: false,
+				}
+			: loadLayeredItems(source);
 	const unregister: Array<() => void> = [];
-	for (const item of items) {
+	for (const item of layered.items) {
 		const content = ({ cwd }: ContributionContext | MessageContext) =>
 			expandTemplate(item.content, { cwd }) || undefined;
 		if (item.channel === "section") {
@@ -84,19 +96,101 @@ export function loadDeclarativeItems(path = itemsFilePath()): { unregister: Arra
 			);
 		}
 	}
-	return { unregister, errors };
+	return {
+		unregister,
+		errors: layered.errors,
+		overridden: layered.overridden,
+		projectCount: layered.projectCount,
+		projectPath: layered.projectPath,
+		skippedUntrusted: layered.skippedUntrusted,
+	};
+}
+
+export interface DeclarativeLoadOptions {
+	cwd: string;
+	projectTrusted: boolean;
+	agentDir?: string;
+}
+
+export interface DeclarativeLoadResult {
+	unregister: Array<() => void>;
+	errors: string[];
+	/** `channel:id` keys where a project item replaced a global one. */
+	overridden: string[];
+	/** How many items came from the project file. */
+	projectCount: number;
+	/** The project items file, or the single path when one file was loaded directly. */
+	projectPath: string;
+	skippedUntrusted: boolean;
+}
+
+/**
+ * Declarative items registered by the current session, kept module-level because `/reload` builds a
+ * new closure and the previous one must not leak a deleted item into the registry.
+ */
+let registered: Array<() => void> = [];
+let registeredKey: string | undefined;
+
+/**
+ * Report a diagnostic the way pi does: through the UI when there is one, on stderr otherwise.
+ *
+ * `console.warn` under a full-screen TUI writes into the terminal the UI owns, which is why pi
+ * itself only falls back to it when `hasUI()` is false.
+ */
+function report(ctx: Pick<ExtensionContext, "hasUI" | "ui">, message: string, type: "info" | "warning"): void {
+	if (ctx.hasUI) ctx.ui.notify(`pi-persist: ${message}`, type);
+	else console.warn(`pi-persist: ${message}`);
+}
+
+/**
+ * Rebuild the declarative set when the trust answer or the working directory changes.
+ *
+ * Pi resolves project trust *after* extensions load, so this cannot happen in the factory: the
+ * first hook carrying a context is the earliest point where `isProjectTrusted()` means anything.
+ * The key makes repeated calls free, and unregistering first means an item deleted from a file — or
+ * a project that lost trust — stops rendering instead of lingering for the rest of the session.
+ */
+function syncDeclarativeItems(ctx: Pick<ExtensionContext, "cwd" | "isProjectTrusted" | "hasUI" | "ui">): void {
+	const trusted = ctx.isProjectTrusted();
+	const key = `${ctx.cwd}\u0000${trusted}`;
+	if (key === registeredKey) return;
+	for (const unregister of registered) unregister();
+	registered = [];
+	registeredKey = key;
+
+	const result = loadDeclarativeItems({ cwd: ctx.cwd, projectTrusted: trusted });
+	registered = result.unregister;
+	if (result.skippedUntrusted) {
+		// Loud on purpose: a repository carrying prompt text is exactly what trust is meant to gate.
+		report(ctx, `ignoring ${result.projectPath} — the project is not trusted`, "warning");
+	} else if (result.projectCount > 0) {
+		// Also loud: pi skips its trust prompt when a project holds no trust-requiring resources, so
+		// a repository with only an items file is trusted without ever being asked about.
+		report(ctx, `loaded ${result.projectCount} item(s) from ${result.projectPath}`, "info");
+	}
+	if (result.errors.length > 0) {
+		report(ctx, `${result.errors.length} item(s) skipped: ${result.errors.join("; ")}`, "warning");
+	}
 }
 
 export default function envContext(pi: ExtensionAPI) {
-	// Seed the preset on a first run, then load. `/reload` re-runs this and picks up edits.
+	// Seed the preset on a first run. `/reload` re-runs this and picks up edits.
 	ensureItemsFile();
-	const declarative = loadDeclarativeItems();
-	if (declarative.errors.length > 0) {
-		console.warn(`pi-persist: ${declarative.errors.length} item(s) skipped in ${itemsFilePath()}`);
-		for (const error of declarative.errors) console.warn(`  ${error}`);
-	}
+	// Drop the previous run's items, then register the global layer straight away: it is user-owned
+	// and never trust-gated, so the registry is usable before any hook has fired. The first hook
+	// below replaces it with the layered set, because project trust is not known yet at this point.
+	for (const unregister of registered) unregister();
+	registeredKey = undefined;
+	registered = loadDeclarativeItems().unregister;
+
+	pi.on("session_start", (_event, ctx) => {
+		syncDeclarativeItems(ctx);
+	});
 
 	pi.on("before_agent_start", (event, ctx) => {
+		// Also here, not only on session_start: the section is built from the registry, so the
+		// items have to be in place before the first render even if the event order ever changes.
+		syncDeclarativeItems(ctx);
 		const section = buildEnvironmentSection({
 			cwd: ctx.cwd,
 			provider: ctx.model?.provider,
@@ -119,6 +213,21 @@ export default function envContext(pi: ExtensionAPI) {
 
 export type { EnvBlock, EnvField, EnvironmentFacts, ShellFacts } from "./environment.ts";
 export { detectEnvironment, detectShell, escapeXml, renderEnvironment } from "./environment.ts";
+export type {
+	DeclarativeItem,
+	ItemChannel,
+	ItemsFile,
+	LayeredItems,
+	LayeredItemsOptions,
+} from "./items.ts";
+export {
+	itemKey,
+	itemsFilePath,
+	loadLayeredItems,
+	parseItemsFile,
+	projectItemsFilePath,
+	readItemsFile,
+} from "./items.ts";
 export type { MessageContext, MessageContribution, ResolvedMessage, TrailingMessageOptions } from "./messages.ts";
 export {
 	appendTrailingMessage,

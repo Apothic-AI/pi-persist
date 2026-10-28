@@ -1,5 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { isValidItemId, parseItemsFile } from "../src/items.ts";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { isValidItemId, itemsFilePath, loadLayeredItems, parseItemsFile, projectItemsFilePath } from "../src/items.ts";
+
+/** A fresh directory per test, so no two cases share a file. */
+function tempDir(prefix: string): string {
+	return mkdtempSync(join(tmpdir(), `pi-persist-${prefix}-`));
+}
+
+function writeItemsFile(path: string, items: unknown[]): void {
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, JSON.stringify({ version: 1, items }));
+}
 
 describe("items file parsing", () => {
 	test("accepts a well-formed file", () => {
@@ -77,5 +90,83 @@ describe("isValidItemId", () => {
 		expect(isValidItemId("my.item-1")).toBe(true);
 		expect(isValidItemId("9lead")).toBe(false);
 		expect(isValidItemId("has space")).toBe(false);
+	});
+});
+
+describe("layered items", () => {
+	const globalItems = [
+		{ id: "clock", channel: "trailing", content: "global clock" },
+		{ id: "env", channel: "section", content: "global env" },
+	];
+
+	test("project items merge over global, winning on channel:id", () => {
+		const agentDir = tempDir("global");
+		const cwd = tempDir("project");
+		writeItemsFile(itemsFilePath(agentDir), globalItems);
+		writeItemsFile(projectItemsFilePath(cwd), [
+			{ id: "clock", channel: "trailing", content: "project clock" },
+			{ id: "repo", channel: "section", content: "project only" },
+		]);
+
+		const layered = loadLayeredItems({ cwd, projectTrusted: true, agentDir });
+
+		expect(layered.errors).toEqual([]);
+		expect(layered.items.map((item) => [item.channel, item.id, item.content])).toEqual([
+			// The override keeps the global position; the project-only item appends.
+			["trailing", "clock", "project clock"],
+			["section", "env", "global env"],
+			["section", "repo", "project only"],
+		]);
+		expect(layered.overridden).toEqual(["trailing:clock"]);
+	});
+
+	test("the same id in two channels is not an override", () => {
+		const agentDir = tempDir("global");
+		const cwd = tempDir("project");
+		writeItemsFile(itemsFilePath(agentDir), globalItems);
+		writeItemsFile(projectItemsFilePath(cwd), [{ id: "clock", channel: "section", content: "section clock" }]);
+
+		const layered = loadLayeredItems({ cwd, projectTrusted: true, agentDir });
+
+		expect(layered.overridden).toEqual([]);
+		expect(layered.items).toHaveLength(3);
+	});
+
+	test("an untrusted project contributes nothing and is reported as skipped", () => {
+		const agentDir = tempDir("global");
+		const cwd = tempDir("project");
+		writeItemsFile(itemsFilePath(agentDir), globalItems);
+		writeItemsFile(projectItemsFilePath(cwd), [{ id: "clock", channel: "trailing", content: "project clock" }]);
+
+		const layered = loadLayeredItems({ cwd, projectTrusted: false, agentDir });
+
+		expect(layered.items.map((item) => item.content)).toEqual(["global clock", "global env"]);
+		expect(layered.overridden).toEqual([]);
+		expect(layered.skippedUntrusted).toBe(true);
+	});
+
+	test("a missing project file is not a trust problem", () => {
+		const agentDir = tempDir("global");
+		writeItemsFile(itemsFilePath(agentDir), globalItems);
+
+		const layered = loadLayeredItems({ cwd: tempDir("empty"), projectTrusted: false, agentDir });
+
+		expect(layered.items).toHaveLength(2);
+		expect(layered.skippedUntrusted).toBe(false);
+		expect(layered.errors).toEqual([]);
+	});
+
+	test("a broken project file keeps the global items and names the file", () => {
+		const agentDir = tempDir("global");
+		const cwd = tempDir("project");
+		writeItemsFile(itemsFilePath(agentDir), globalItems);
+		mkdirSync(dirname(projectItemsFilePath(cwd)), { recursive: true });
+		writeFileSync(projectItemsFilePath(cwd), "{ not json");
+
+		const layered = loadLayeredItems({ cwd, projectTrusted: true, agentDir });
+
+		expect(layered.items.map((item) => item.id)).toEqual(["clock", "env"]);
+		expect(layered.errors).toHaveLength(1);
+		expect(layered.errors[0]).toContain(projectItemsFilePath(cwd));
 	});
 });

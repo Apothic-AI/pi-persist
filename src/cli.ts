@@ -7,11 +7,15 @@
  * representation. It talks to files only: no pi process, no session, no registry. Items take effect
  * on the next `/reload` or session start.
  */
+import { existsSync } from "node:fs";
 import {
 	type DeclarativeItem,
 	type ItemChannel,
+	itemKey,
 	itemsFilePath,
+	loadLayeredItems,
 	PRESET_ITEMS,
+	projectItemsFilePath,
 	readItemsFile,
 	updateItemsFile,
 } from "./items.ts";
@@ -22,11 +26,14 @@ const USAGE = `pi-persist — declarative context items
 Usage:
   pi-persist list
   pi-persist add <id> <content> [--channel trailing|section] [--priority <n>]
-                                 [--providers <a,b>] [--tools <x,y>]
-  pi-persist remove <id> [--channel trailing|section]
+                                 [--providers <a,b>] [--tools <x,y>] [--project]
+  pi-persist remove <id> [--channel trailing|section] [--project]
   pi-persist preset            write the shipped preset items (current_datetime)
 
 Options:
+  --project    Target <cwd>/.pi/pi-persist.json instead of the global items file.
+               Project items load only when the project is trusted, and they
+               override a global item with the same channel:id.
   --channel    Where the item is injected. Default: trailing.
                trailing = appended to every request (uncached, always visible)
                section  = cached in the leading system prompt (cheap, changes rarely)
@@ -47,6 +54,8 @@ Templates available in <content>:
 
 Files:
   items     ${itemsFilePath()}
+  project   ${projectItemsFilePath(process.cwd())}
+            written with --project, read when the project is trusted
 `;
 
 class UsageError extends Error {}
@@ -55,6 +64,9 @@ interface Args {
 	positional: string[];
 	flags: Map<string, string>;
 }
+
+/** Flags that stand alone, so `--project` does not swallow the next argument. */
+const BOOLEAN_FLAGS = new Set(["project"]);
 
 function parseArgs(argv: readonly string[]): Args {
 	const positional: string[] = [];
@@ -66,12 +78,26 @@ function parseArgs(argv: readonly string[]): Args {
 			continue;
 		}
 		const name = arg.slice(2);
+		if (BOOLEAN_FLAGS.has(name)) {
+			flags.set(name, "true");
+			continue;
+		}
 		const value = argv[index + 1];
 		if (value === undefined || value.startsWith("--")) throw new UsageError(`--${name} needs a value`);
 		flags.set(name, value);
 		index++;
 	}
 	return { positional, flags };
+}
+
+/**
+ * Which items file a mutating command writes to.
+ *
+ * The CLI writes files, not registry entries, so it does not need to know whether the project is
+ * trusted: an untrusted project's file simply sits there unread until trust is granted.
+ */
+function targetPath(flags: Map<string, string>): string {
+	return flags.has("project") ? projectItemsFilePath(process.cwd()) : itemsFilePath();
 }
 
 function splitList(value: string | undefined): string[] | undefined {
@@ -111,6 +137,7 @@ async function add(argv: readonly string[]): Promise<void> {
 	if (activeTools) item.activeTools = activeTools;
 
 	let replaced = false;
+	const path = targetPath(flags);
 	await updateItemsFile((file) => {
 		const index = file.items.findIndex((entry) => entry.id === id && entry.channel === channel);
 		if (index >= 0) {
@@ -120,8 +147,9 @@ async function add(argv: readonly string[]): Promise<void> {
 			file.items.push(item);
 		}
 		return file;
-	});
-	console.log(`${replaced ? "replaced" : "added"} ${channel} item "${id}"`);
+	}, path);
+	console.log(`${replaced ? "replaced" : "added"} ${channel} item "${id}" in ${path}`);
+	if (flags.has("project")) console.log("Project items load only when the project is trusted.");
 	console.log("Takes effect on the next /reload or session start.");
 }
 
@@ -132,6 +160,7 @@ async function remove(argv: readonly string[]): Promise<void> {
 	const only = flags.has("channel") ? readChannel(flags) : undefined;
 
 	let removed = 0;
+	const path = targetPath(flags);
 	await updateItemsFile((file) => {
 		file.items = file.items.filter((entry) => {
 			const match = entry.id === id && (only === undefined || entry.channel === only);
@@ -139,35 +168,50 @@ async function remove(argv: readonly string[]): Promise<void> {
 			return !match;
 		});
 		return file;
-	});
+	}, path);
 	if (removed === 0) {
 		const scope = only ? ` in channel "${only}"` : "";
-		throw new UsageError(`no item "${id}"${scope}`);
+		throw new UsageError(`no item "${id}"${scope} in ${path}`);
 	}
-	console.log(`removed ${removed} item(s) named "${id}"`);
+	console.log(`removed ${removed} item(s) named "${id}" from ${path}`);
 	console.log("Takes effect on the next /reload or session start.");
 }
 
 function list(argv: readonly string[]): void {
 	parseArgs(argv);
 	const path = itemsFilePath();
-	const { items, errors } = readItemsFile(path);
+	const projectPath = projectItemsFilePath(process.cwd());
+	// The effective set, i.e. what a trusted session would register.
+	const layered = loadLayeredItems({ cwd: process.cwd(), projectTrusted: true });
+	const projectKeys = new Set(readItemsFile(projectPath).items.map(itemKey));
 	console.log(`items file: ${path}`);
+	if (existsSync(projectPath)) {
+		console.log(`project file: ${projectPath}`);
+		console.log(
+			"  (project items load only when the project is trusted, and override a global item with the same channel:id)",
+		);
+	}
 	console.log("");
 
-	if (items.length === 0) {
+	if (layered.items.length === 0) {
 		console.log("no declarative items");
 	} else {
-		const rows = items.map((item) => {
+		const rows = layered.items.map((item) => {
 			const policy: string[] = [];
 			if (item.priority !== undefined) policy.push(`priority=${item.priority}`);
 			if (item.providers) policy.push(`providers=${item.providers.join(",")}`);
 			if (item.activeTools) policy.push(`tools=${item.activeTools.join(",")}`);
 			// Show what the template expands to for this machine, so `add` mistakes are visible.
 			const preview = expandTemplate(item.content, { cwd: process.cwd() });
-			return [item.id, item.channel, policy.join(" ") || "-", preview];
+			return [
+				item.id,
+				item.channel,
+				projectKeys.has(itemKey(item)) ? "project" : "global",
+				policy.join(" ") || "-",
+				preview,
+			];
 		});
-		const header = ["ID", "CHANNEL", "POLICY", "CONTENT"];
+		const header = ["ID", "CHANNEL", "SOURCE", "POLICY", "CONTENT"];
 		const widths = header.map((label, index) => Math.max(label.length, ...rows.map((row) => row[index]!.length)));
 		const format = (row: string[]) =>
 			row
@@ -179,10 +223,15 @@ function list(argv: readonly string[]): void {
 		for (const row of rows) console.log(format(row));
 	}
 
-	if (errors.length > 0) {
+	if (layered.overridden.length > 0) {
 		console.log("");
-		console.log(`${errors.length} problem(s) in the items file:`);
-		for (const error of errors) console.log(`  ${error}`);
+		console.log(`overriding global: ${layered.overridden.join(", ")}`);
+	}
+
+	if (layered.errors.length > 0) {
+		console.log("");
+		console.log(`${layered.errors.length} problem(s) in the items files:`);
+		for (const error of layered.errors) console.log(`  ${error}`);
 	}
 }
 
