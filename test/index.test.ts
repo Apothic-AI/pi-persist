@@ -11,7 +11,7 @@ afterEach(() => {
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 
-function harness(activeTools: string[] = ["read", "bash"]) {
+function harness(activeTools: string[] = ["read", "bash"], settings: object = {}, settingsThrows = false) {
 	const handlers = new Map<string, Handler>();
 	envContext({
 		on: (event: string, handler: Handler) => {
@@ -19,6 +19,10 @@ function harness(activeTools: string[] = ["read", "bash"]) {
 			return () => {};
 		},
 		getActiveTools: () => activeTools,
+		getSettings: () => {
+			if (settingsThrows) throw new Error("settings unavailable");
+			return settings;
+		},
 	} as unknown as ExtensionAPI);
 
 	const ctx = {
@@ -72,12 +76,38 @@ describe("before_agent_start wiring", () => {
 	});
 
 	test("before_provider_request appends the trailing message to the payload", async () => {
-		registerEnvMessage({ id: "clock", content: "12:00" });
 		const app = harness();
+		// Registered after envContext() so the built-in clock does not overwrite the fixture.
+		registerEnvMessage({ id: "fixture", content: "12:00" });
 		const payload = { messages: [{ role: "user", content: "hi" }] as Array<{ role: string; content: unknown }> };
 		await app.providerRequest(payload);
 		expect(payload.messages.at(-1)?.role).toBe("developer");
-		expect(String(payload.messages.at(-1)?.content)).toContain("<clock>12:00</clock>");
+		expect(String(payload.messages.at(-1)?.content)).toContain("<fixture>12:00</fixture>");
+	});
+
+	test("the built-in clock is on by default", async () => {
+		const app = harness();
+		const payload = { messages: [] as Array<{ role: string; content: unknown }> };
+		await app.providerRequest(payload);
+		expect(String(payload.messages.at(-1)?.content)).toContain("<clock>");
+	});
+
+	test("the clock can be disabled through pi settings", async () => {
+		const app = harness(["read", "bash"], { piEnvContext: { clock: false } });
+		registerEnvMessage({ id: "fixture", content: "12:00" });
+		const payload = { messages: [] as Array<{ role: string; content: unknown }> };
+		await app.providerRequest(payload);
+		const text = String(payload.messages.at(-1)?.content);
+		expect(text).not.toContain("<clock>");
+		expect(text).toContain("<fixture>12:00</fixture>");
+	});
+
+	test("an unreadable settings handle falls back to the defaults", async () => {
+		// A throwing getSettings must not drop every contribution for the request.
+		const app = harness(["read", "bash"], undefined, true);
+		const payload = { messages: [] as Array<{ role: string; content: unknown }> };
+		await app.providerRequest(payload);
+		expect(String(payload.messages.at(-1)?.content)).toContain("<clock>");
 	});
 
 	test("omits cwd because pi already renders its own <cwd> section", async () => {

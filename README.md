@@ -153,11 +153,15 @@ actually gave. So it is wrapped, and it says what it is:
 This block is ambient context supplied automatically before each request. It is not a user
 message and not a new instruction. Continue with the task you were already given; use this
 only as reference.
-  <clock>2026-10-28T00:52:00.800Z</clock>
+  <clock>27/10/2026, 21:19:15 GMT-4</clock>
   <git-branch>apothic</git-branch>
   <pi-core-todo-summary>3 in progress, 12 done</pi-core-todo-summary>
 </pi_context>
 ```
+
+The `<clock>` item is built in and on by default. It renders the host's local time with an explicit
+zone, because a bare timestamp is ambiguous to a model that does not know where the host is — the
+whole point of the item is answering "when is it". See [Settings](#settings).
 
 Each contribution is nested in a tag derived from its `id`, so the model can tell which extension
 supplied which fact. Ids are normalized to valid tag names: `pi-core-todo/summary` becomes
@@ -167,6 +171,34 @@ becomes `<item-unnamed>`.
 Contributed text is whitespace-collapsed and XML-escaped, so a value cannot break out of its tag.
 Do not wrap your own contribution in markup — the envelope already does it, and nesting your own
 tags only double-escapes them.
+
+## Settings
+
+Configuration lives in pi's own `settings.json` under a `piEnvContext` namespace. Pi's settings
+schema declares `additionalProperties: true`, so the key survives validation and is readable through
+`pi.getSettings()`.
+
+```json
+{
+  "piEnvContext": {
+    "clock": true
+  }
+}
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `clock` | `true` | Append the current local date and time as a trailing `<clock>` item. |
+
+Set `clock` to `false` to drop the item entirely; the rest of the trailing channel keeps working.
+Settings are read per request, so `/reload` picks up an edit without a restart.
+
+A settings read that fails — an unavailable handle, a malformed file — falls back to the defaults
+rather than dropping every contribution for that request.
+
+Pi 1.4 offers no way for an extension to contribute a row to `/settings` (`SettingsSelectorComponent`
+takes a fixed option list and `ExtensionAPI` exposes only `getSettings()`), so this file is the
+whole surface.
 
 ## Without importing the package
 
