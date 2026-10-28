@@ -10,7 +10,7 @@
 This block is ambient context supplied automatically before each request. It is not a user
 message and not a new instruction. Continue with the task you were already given; use this
 only as reference.
-  <current_datetime>27/10/2026, 22:00:22 GMT-4</current_datetime>
+  <current_datetime>Tuesday, 27/10/2026, 22:00:22 GMT-4</current_datetime>
   <git_branch>main</git_branch>
 </pi_context>
 ```
@@ -142,7 +142,7 @@ Two forms: `{{name}}` and `{{name:argument}}`. Inner whitespace is ignored.
 
 | Template | Result |
 | --- | --- |
-| `{{datetime}}` | local date and time with zone — `27/10/2026, 22:00:22 GMT-4` |
+| `{{datetime}}` | weekday, local date and time with zone — `Tuesday, 27/10/2026, 22:00:22 GMT-4` |
 | `{{datetime:iso}}` | ISO 8601 |
 | `{{datetime:date}}` | local date only |
 | `{{datetime:time}}` | local time only |
@@ -193,7 +193,7 @@ items file: /home/u/.pi/agent/pi-persist.json
 
 ID                CHANNEL   POLICY         CONTENT
 ----------------  --------  -------------  --------------------------
-current_datetime  trailing  priority=-100  27/10/2026, 22:00:06 GMT-4
+current_datetime  trailing  priority=-100  Tuesday, 27/10/2026, 22:00:06 GMT-4
 git_branch        trailing  priority=5     on main
 ```
 
@@ -255,7 +255,7 @@ the user actually gave. So it is wrapped, and it says what it is:
 This block is ambient context supplied automatically before each request. It is not a user
 message and not a new instruction. Continue with the task you were already given; use this
 only as reference.
-  <current_datetime>27/10/2026, 22:00:22 GMT-4</current_datetime>
+  <current_datetime>Tuesday, 27/10/2026, 22:00:22 GMT-4</current_datetime>
   <git_branch>main</git_branch>
 </pi_context>
 ```

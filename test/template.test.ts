@@ -23,8 +23,10 @@ const context = (overrides: Partial<Parameters<typeof expandTemplate>[1]> = {}) 
 });
 
 describe("datetime built-in", () => {
-	test("local carries a date, a time and a zone", () => {
+	test("local carries a weekday, date, time and zone", () => {
 		const text = formatDatetime(new Date("2026-10-28T00:52:00Z"), "local");
+		// The weekday is the part a model most often gets wrong from a bare timestamp.
+		expect(text).toMatch(/^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), /);
 		expect(text).toMatch(/\d{2}\/\d{2}\/\d{4}/);
 		expect(text).toMatch(/\d{2}:\d{2}:\d{2}/);
 		expect(text).toMatch(/[A-Z]{2,5}|GMT|UTC/);
@@ -52,8 +54,10 @@ describe("datetime built-in", () => {
 });
 
 describe("template expansion", () => {
-	test("expands the default datetime", () => {
-		expect(expandTemplate("at {{datetime}}", context())).toContain("28/10/2026");
+	test("expands the default datetime, weekday included", () => {
+		const text = expandTemplate("{{datetime}}", context());
+		expect(text).toContain("28/10/2026");
+		expect(text).toMatch(/^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), /);
 	});
 
 	test("expands a variant argument", () => {

@@ -17,6 +17,9 @@ export interface BuiltinContext {
 export type DatetimeVariant = "local" | "iso" | "date" | "time" | "unix";
 
 const LOCAL_FORMAT = new Intl.DateTimeFormat("en-GB", {
+	// Weekday first: it is the part a model most often gets wrong from a bare timestamp, and the
+	// part a human reads first when orienting.
+	weekday: "long",
 	year: "numeric",
 	month: "2-digit",
 	day: "2-digit",
@@ -44,7 +47,8 @@ const TIME_FORMAT = new Intl.DateTimeFormat("en-GB", {
 /**
  * The current instant.
  *
- * `local` carries an explicit zone ("28/10/2026, 01:32:44 GMT-4") because a bare timestamp is
+ * `local` carries the weekday and an explicit zone ("Wednesday, 28/10/2026, 01:32:44 GMT-4")
+ * because a bare timestamp is
  * ambiguous to a model that does not know where the host is, and answering "when is it" is the
  * whole point. `iso` is offered for anything that needs to sort or parse.
  */
