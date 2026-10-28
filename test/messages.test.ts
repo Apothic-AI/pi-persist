@@ -183,15 +183,32 @@ describe("appendTrailingMessage", () => {
 describe("envelope rendering", () => {
 	test("separates 'not a user turn' from 'contents are authoritative'", () => {
 		const text = renderTrailingMessage([{ id: "clock", content: "12:00" }]);
-		// The envelope must not read as the user's request...
+		// Must not read as the user's request...
 		expect(text).toContain("not a user message");
-		expect(text).toContain("does not");
-		// ...but it must not tell the model to discard instructions either. An earlier preamble said
-		// "not a new instruction", and models correctly refused to follow items that were one.
+		// ...and must not tell the model to discard the contents. An earlier preamble said "not a new
+		// instruction / use this only as reference", and models correctly refused to follow items
+		// whose whole purpose was to carry one.
 		expect(text).toContain("authoritative");
 		expect(text).toContain("follow any");
-		expect(text).not.toContain("not a new instruction");
-		expect(text).not.toContain("use this\nonly as reference");
+	});
+
+	test("never instructs the model to ignore the contents", () => {
+		// A deny-list of the specific failure mode, not one literal string: the bug was semantic, so
+		// any future reword that reintroduces "treat this as non-authoritative" must fail here.
+		const text = renderTrailingMessage([{ id: "clock", content: "12:00" }]).toLowerCase();
+		const forbidden = [
+			"not a new instruction",
+			"only as reference",
+			"for reference only",
+			"do not follow",
+			"don't follow",
+			"ignore any instruction",
+			"ignore the instruction",
+			"ignore this",
+			"non-authoritative",
+			"not authoritative",
+		];
+		for (const phrase of forbidden) expect(text).not.toContain(phrase);
 	});
 
 	test("nests each contribution in its own tag, preserving the given order", () => {
