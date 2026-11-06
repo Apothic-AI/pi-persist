@@ -172,6 +172,33 @@ back. `pi-persist preset` writes it again on demand.
 
 ---
 
+## Turning it off
+
+`/pi-persist-toggle` switches the whole extension on and off. Off means nothing is injected: no
+`<environment_context>` section, no trailing `<pi_context>` message, and no `{{exec:…}}` command
+running on the request path. The items stay in the file, so turning it back on restores exactly
+what was there before.
+
+```console
+$ /pi-persist-toggle
+pi-persist: is off — nothing is injected until it is turned back on
+
+$ /pi-persist-toggle on
+pi-persist: is on — the section and the trailing message are injected again
+```
+
+`/pi-persist-toggle status` reports the state without changing it, and `on` / `off` set it
+explicitly instead of flipping it.
+
+The switch is written to `piPersist.enabled` in `~/.pi/agent/settings.json`, so it survives a
+`/reload` and the next session. It is global: a project cannot turn the operator's context on or
+off. A settings file that cannot be written — one that is locked, or one that is not valid JSON —
+leaves the switch on for the session only, and says so.
+
+`pi-persist list` prints the state as well, so a missing clock is easy to explain.
+
+---
+
 ## Templates
 
 Two forms: `{{name}}` and `{{name:argument}}`. Inner whitespace is ignored.
@@ -228,6 +255,7 @@ Takes effect on the next /reload or session start.
 
 $ pi-persist list
 items file: /home/u/.pi/agent/pi-persist.json
+state: on — the items below are injected
 
 ID                CHANNEL   SOURCE  POLICY         CONTENT
 ----------------  --------  ------  -------------  --------------------------
@@ -237,7 +265,8 @@ git_branch        trailing  global  priority=5     on main
 
 `list` shows the **effective** set — both files, merged — with the source of each item, so an
 override is visible as one row rather than two. When a project file is present it is named above the
-table, together with the `channel:id` keys it overrides.
+table, together with the `channel:id` keys it overrides. The state line says whether anything is
+being injected at all: `/pi-persist-toggle` flips it.
 
 `list` expands templates against the **current machine**, so a broken `exec:` shows up immediately
 instead of after a reload. The CLI talks to files only — no pi process, no session. Changes take
@@ -343,7 +372,8 @@ in bash — reporting zsh would be wrong in a way the model cannot detect.
 | Declarative items | `~/.pi/agent/pi-persist.json` | on disk |
 | Project items | `<cwd>/.pi/pi-persist.json` | on disk, read only when the project is trusted |
 | Injected output | never written — built per request | one request |
-| Settings (`piPersist` namespace) | `~/.pi/agent/settings.json` | on disk |
+| Settings (`piPersist.enabled`) | `~/.pi/agent/settings.json` | on disk |
+| The on/off switch in this session | a slot on `globalThis` | the pi process |
 
 Nothing accumulates in the session or transcript: contributions are registered once (the global
 items at load, the merged set at session start) and rendered per request, never persisted as messages
@@ -372,12 +402,16 @@ The extension adopts a pre-existing registry when it loads and reads it at rende
 does not matter. It declines to write into a value that occupies the symbol with a different
 `protocol` or `version`.
 
+The on/off switch lives on `globalThis` for the same reason, under
+`Symbol.for("pi-persist/enabled/v1")`: a session can load this package twice, and two copies that
+disagreed about whether the extension is on would inject half of what was asked for.
+
 ---
 
 ## Develop
 
 ```sh
-bun test          # 88 tests
+bun test          # 126 tests
 npx tsc --noEmit
 biome check .
 ```

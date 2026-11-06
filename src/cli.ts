@@ -19,6 +19,7 @@ import {
 	readItemsFile,
 	updateItemsFile,
 } from "./items.ts";
+import { readSettingsFromDisk, settingsFilePath } from "./settings.ts";
 import { expandTemplate } from "./template.ts";
 
 const USAGE = `pi-persist — declarative context items
@@ -56,6 +57,8 @@ Files:
   items     ${itemsFilePath()}
   project   ${projectItemsFilePath(process.cwd())}
             written with --project, read when the project is trusted
+  settings  ${settingsFilePath()}
+            holds the on/off switch; /pi-persist-toggle flips it
 `;
 
 class UsageError extends Error {}
@@ -185,6 +188,13 @@ function list(argv: readonly string[]): void {
 	const layered = loadLayeredItems({ cwd: process.cwd(), projectTrusted: true });
 	const projectKeys = new Set(readItemsFile(projectPath).items.map(itemKey));
 	console.log(`items file: ${path}`);
+	// The switch decides whether any of this is injected at all, so it belongs next to the list.
+	const enabled = readSettingsFromDisk().enabled;
+	console.log(
+		enabled
+			? "state: on — the items below are injected"
+			: "state: off — nothing is injected; run /pi-persist-toggle to turn it back on",
+	);
 	if (existsSync(projectPath)) {
 		console.log(`project file: ${projectPath}`);
 		console.log(

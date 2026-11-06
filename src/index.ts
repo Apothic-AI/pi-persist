@@ -4,6 +4,7 @@ import { ensureItemsFile, itemsFilePath, loadLayeredItems, readItemsFile } from 
 import { appendTrailingMessage, type MessageContext, registerEnvMessage } from "./messages.ts";
 import { type ContributionContext, collectContributions, registerEnvContribution } from "./registry.ts";
 import { expandTemplate } from "./template.ts";
+import { isEnabled, parseToggleArgument, resetEnabled, TOGGLE_COMMAND, toggleEnabled } from "./toggle.ts";
 
 /** Prompt section name. Pi renders it as `<environment_context>…</environment_context>`. */
 export const SECTION_NAME = "environment_context";
@@ -174,6 +175,9 @@ function syncDeclarativeItems(ctx: Pick<ExtensionContext, "cwd" | "isProjectTrus
 }
 
 export default function envContext(pi: ExtensionAPI) {
+	// The switch lives in pi's settings file. Re-read it on every load, so a `/reload` picks up an
+	// edit — or the state the last session left behind.
+	resetEnabled();
 	// Seed the preset on a first run. `/reload` re-runs this and picks up edits.
 	ensureItemsFile();
 	// Drop the previous run's items, then register the global layer straight away: it is user-owned
@@ -185,12 +189,22 @@ export default function envContext(pi: ExtensionAPI) {
 
 	pi.on("session_start", (_event, ctx) => {
 		syncDeclarativeItems(ctx);
+		if (!isEnabled()) {
+			// Say so once per session: a missing clock is otherwise indistinguishable from a bug.
+			report(ctx, "is off — no context is injected. Run /pi-persist-toggle to turn it back on.", "info");
+		}
 	});
 
 	pi.on("before_agent_start", (event, ctx) => {
 		// Also here, not only on session_start: the section is built from the registry, so the
 		// items have to be in place before the first render even if the event order ever changes.
 		syncDeclarativeItems(ctx);
+		if (!isEnabled()) {
+			// Off: the extension contributes nothing, so there is no section to render. Removing the
+			// key rather than leaving it empty also drops a section a previous run left behind.
+			delete event.systemPromptOptions.sections[SECTION_NAME];
+			return;
+		}
 		const section = buildEnvironmentSection({
 			cwd: ctx.cwd,
 			provider: ctx.model?.provider,
@@ -206,8 +220,40 @@ export default function envContext(pi: ExtensionAPI) {
 	// Per request, not per run: a tool-using run issues several requests, and a trailing message
 	// injected in `before_agent_start` would be missing from all but the first.
 	pi.on("before_provider_request", (event, ctx) => {
+		if (!isEnabled()) return;
 		const options = { activeTools: pi.getActiveTools(), cwd: ctx.cwd, mode: ctx.mode };
 		return appendTrailingMessage(event.payload, options, ctx.model?.provider);
+	});
+
+	pi.registerCommand(TOGGLE_COMMAND, {
+		description: "Turn pi-persist context injection on or off",
+		handler: async (args, ctx) => {
+			const requested = parseToggleArgument(args);
+			if (!requested) {
+				report(ctx, `usage: /${TOGGLE_COMMAND} [on|off|status]`, "warning");
+				return;
+			}
+			if (requested === "status") {
+				report(ctx, `is ${isEnabled() ? "on" : "off"}`, "info");
+				return;
+			}
+			const result = await toggleEnabled(requested === "toggle" ? undefined : requested === "on");
+			if (!result.persisted) {
+				report(
+					ctx,
+					`is ${result.enabled ? "on" : "off"} for this session only — not saved: ${result.error ?? "unknown error"}`,
+					"warning",
+				);
+				return;
+			}
+			report(
+				ctx,
+				result.enabled
+					? "is on — the section and the trailing message are injected again"
+					: "is off — nothing is injected until it is turned back on",
+				"info",
+			);
+		},
 	});
 }
 
@@ -253,4 +299,8 @@ export {
 	readPersistSettings,
 	readSettingsFromDisk,
 	SETTINGS_KEY,
+	setPersistEnabled,
+	settingsFilePath,
 } from "./settings.ts";
+export type { ToggleArgument, ToggleResult } from "./toggle.ts";
+export { isEnabled, parseToggleArgument, resetEnabled, TOGGLE_COMMAND, toggleEnabled } from "./toggle.ts";

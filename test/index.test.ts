@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,13 +6,26 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import envContext, { buildEnvironmentSection, DEFAULT_OMIT, SECTION_NAME } from "../src/index.ts";
 import { clearEnvMessages, registerEnvMessage } from "../src/messages.ts";
 import { clearContributions, REGISTRY_SYMBOL, registerEnvContribution } from "../src/registry.ts";
+import { resetEnabled } from "../src/toggle.ts";
 
 afterEach(() => {
 	clearContributions();
 	clearEnvMessages();
+	if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+	else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+	resetEnabled();
+});
+
+// The on/off switch is read from pi's settings file, so every test gets a file of its own rather
+// than the operator's: a real one that says "off" would fail every test here.
+beforeEach(() => {
+	process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "pi-persist-agent-"));
+	resetEnabled();
 });
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
+
+const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
 
 function harness(
 	activeTools: string[] = ["read", "bash"],
@@ -31,6 +44,7 @@ function harness(
 			handlers.set(event, handler);
 			return () => {};
 		},
+		registerCommand: () => {},
 		getActiveTools: () => activeTools,
 		getSettings: () => {
 			if (settingsThrows) throw new Error("settings unavailable");
